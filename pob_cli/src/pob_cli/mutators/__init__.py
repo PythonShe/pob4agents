@@ -25,7 +25,6 @@ from .build_state import (
 from .common import (
     _BatchCache,
     _call_batch,
-    _call_compat,
     _check_agnostic_dealloc_caution,
     _fold_no_apos,
     _fold_search_text,
@@ -111,7 +110,6 @@ __all__ = [
     "_apply_vaal_defaults_batch",
     "_build_add_gem_params",
     "_call_batch",
-    "_call_compat",
     "_check_agnostic_dealloc_caution",
     "_coerce_config_value",
     "_collect_return_sections",

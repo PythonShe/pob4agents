@@ -17,7 +17,7 @@ from ..snapshot import (
     supports_direct_calc,
 )
 from .batch_ops import _execute_batch_ops, ops_scope
-from .common import _BatchCache, _call_compat, _merge_cautions, _normalize_keep_list
+from .common import _BatchCache, _merge_cautions, _normalize_keep_list
 from .sweep_report import _compact_sweep_summary, _extract_compact_calcs
 
 
@@ -75,10 +75,10 @@ def _collect_return_sections(
                     f"Unsupported audit return modifier '{raw_sec}'. "
                     "Use 'audit', 'audit:full', or 'audit:attribution'."
                 )
-            out["audit"] = _call_compat(_analyzer.audit_build, worker, keep=keep_arg, attribution=attr)
+            out["audit"] = _analyzer.audit_build(worker, keep=keep_arg, attribution=attr)
         elif head_low == "matrix":
             scenarios = [s.strip() for s in body.split(";") if s.strip()] if body else None
-            out["matrix"] = _call_compat(_comparator.run_matrix, worker, scenarios=scenarios, keep=keep_arg)
+            out["matrix"] = _comparator.run_matrix(worker, scenarios=scenarios, keep=keep_arg)
         elif head_low == "calc":
             kws = [k.strip() for k in body.split(";") if k.strip()] if body else []
             if not kws:
@@ -276,7 +276,7 @@ def run_sweep(
             from ..comparator import _apply_matrix_scenario_in_place, _parse_matrix_scenario
 
             plan = _parse_matrix_scenario(scenario)
-            scenario_applied = _call_compat(_apply_matrix_scenario_in_place, worker, plan, keep=eff_keep)
+            scenario_applied = _apply_matrix_scenario_in_place(worker, plan, keep=eff_keep)
         base_cp = tx.checkpoint() if (base_ops or has_scenario) else tx.base
 
         full_base = _mut.capture_digest(worker)

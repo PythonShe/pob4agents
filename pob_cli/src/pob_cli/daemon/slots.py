@@ -28,7 +28,6 @@ from .runtime import (
     REF_IDLE_TIMEOUT_SEC,
     UPDATE_RECHECK_INTERVAL_SEC,
     BootstrapMissingError,
-    _call_compat,
     _daemon_state_file,
     _get_runtime_dir,
     _is_offline_env,
@@ -130,8 +129,7 @@ class DaemonManager:
     def _new_worker(self, slot_name: str) -> BridgeWorker:
         import pob_cli.daemon as _daemon_pkg
 
-        worker = _call_compat(
-            _daemon_pkg.BridgeWorker,
+        worker = _daemon_pkg.BridgeWorker(
             slot_name=slot_name,
             pob_dir=self.pob_dir,
             runtime_dir=self.runtime_dir,

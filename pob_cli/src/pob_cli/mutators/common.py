@@ -9,7 +9,6 @@ from typing import Any
 
 from .. import game_data as _game_data
 from ..bridge_client import BridgeWorker
-from ..compat import call_compat as _call_compat  # noqa: F401  (re-exported for batch_sweep)
 from ..formatters import strip_pob_escapes
 from ..guardrails import normalize_equipment_slot
 

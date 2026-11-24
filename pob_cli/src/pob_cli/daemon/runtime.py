@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any
 
 from ..bridge_client import RUNTIME_DIR
-from ..compat import call_compat as _call_compat  # noqa: F401  (re-exported for daemon package)
 from ..compat import ensure_utf8
 from ..errors import BootstrapMissingError as BootstrapMissingError
 from ..os_util import _get_kernel32 as _get_kernel32

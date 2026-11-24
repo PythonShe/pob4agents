@@ -450,7 +450,7 @@ def test_daemon_multi_slot_parallel_locks_and_status(tmp_path: Path, monkeypatch
     entered_barrier = threading.Barrier(2, timeout=3.0)
 
     class _ConcurrentFakeWorker:
-        def __init__(self, slot_name: str = "main", pob_dir: Path | None = None) -> None:
+        def __init__(self, slot_name: str = "main", pob_dir: Path | None = None, runtime_dir: Path | None = None) -> None:
             self.slot_name = slot_name
             self.pob_root = pob_dir or eng
             self.alive = False

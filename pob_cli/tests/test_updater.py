@@ -779,7 +779,7 @@ def test_daemon_hot_reload_serializes_concurrent_get_worker_and_status(
     check_calls = 0
 
     class _FakeWorker:
-        def __init__(self, slot_name: str = "main", pob_dir: Path | None = None) -> None:
+        def __init__(self, slot_name: str = "main", pob_dir: Path | None = None, runtime_dir: Path | None = None) -> None:
             self.slot_name = slot_name
             self.pob_root = pob_dir or eng
             self.alive = False
@@ -1009,7 +1009,7 @@ def test_daemon_start_non_blocking_background_update_check(
     recorded_kwargs: dict[str, Any] = {}
 
     class _FastFakeWorker:
-        def __init__(self, slot_name: str = "main", pob_dir: Path | None = None) -> None:
+        def __init__(self, slot_name: str = "main", pob_dir: Path | None = None, runtime_dir: Path | None = None) -> None:
             self.slot_name = slot_name
             self.pob_root = pob_dir or eng
             self.alive = False
