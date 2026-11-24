@@ -28,7 +28,7 @@ If you've never used one before, search YouTube for a quick setup tutorial.
 
 ## How do I use it?
 
-Once installed, open a fresh chat and drop in your `poe.ninja` link, official PoE profile link (International or CN), or PoB export link/code — it recognizes all of them.
+Once installed, open a fresh chat and drop in your `poe.ninja` link, official PoE profile link, or PoB export link/code — it recognizes all of them.
 
 (Note that the official profile API doesn't include Bandits or Pantheon, so double-check those with your agent after importing.)
 
@@ -48,14 +48,13 @@ If it struggles on a weird build, don't stress — PoE is a wildly complex game.
 
 ## Want it to search trade gear and Timeless Jewels?
 
-You'll need to provide your `POESESSID` to unlock full functionality (also needed for importing a CN `poe.game.qq.com` profile or a private International profile).
+You'll need to provide your `POESESSID` to unlock full functionality (also needed for importing a private profile).
 
 ### How to grab it:
 
 Open DevTools (`F12`) on the official PoE site or trade page, go to the **Application** tab → **Storage** → **Cookies**, find `POESESSID`, and copy its value.
 
-- **International (`pathofexile.com`)**: paste it directly to your agent and ask it to save it to your local `POESESSID` environment variable.
-- **CN server (`poe.game.qq.com`)**: copy it the same way, paste it to your agent, and **mention it's for the CN server** so it saves it to `POE_CN_SESSID`.
+Paste it directly to your agent and ask it to save it to your local `POESESSID` environment variable.
 
 > [!CAUTION]
 > Never share your `POESESSID` with anyone or show it on stream or in screenshots! It works like your account login credential — keep it private.
@@ -129,9 +128,8 @@ If the current client does not support these hook formats, inform the user clear
 ### 5. Final Verification & Cookie Security Rules
 
 - **Verify & finish**: once `pob status` is healthy, `skills/pob` is in place, and hooks are wired up, **remind the user to open a new chat window** so the new Skill and Hooks take effect.
-- **When the user sends a session cookie**:
-  - International trade / private profile → save to the local user-level environment variable **`POESESSID`** (Windows PowerShell: `[Environment]::SetEnvironmentVariable("POESESSID", "<value>", "User")`; macOS/Linux: write to shell profile).
-  - CN server (`poe.game.qq.com`) profile import → save to the local user-level environment variable **`POE_CN_SESSID`** (or full `POE_CN_COOKIE`).
+- **When the user sends a `POESESSID`**:
+  - Save it to the local user-level environment variable **`POESESSID`** (Windows PowerShell: `[Environment]::SetEnvironmentVariable("POESESSID", "<value>", "User")`; macOS/Linux: write to shell profile).
   - **NEVER** pass cookies in CLI arguments, commit them to files/repos, or write them to logs. **NEVER** run `Get-ChildItem Env:` / `printenv` to inspect or print environment variables, and never echo the raw value back in your reply. To check whether credentials are configured, run `pob status` only.
 
 <details>
@@ -154,7 +152,7 @@ If the current client does not support these hook formats, inform the user clear
 
 ### Troubleshooting Env Vars & Repository Docs
 
-- Common env vars: `POB_PROXY` (network proxy), `POB_GITHUB_MIRROR` (GitHub mirror prefix; file replacements still verify hashes/signatures), `POB_OFFLINE=1` (skip update checks), `POESESSID` (International trade / private profile), `POE_CN_SESSID` (CN profile import).
+- Common env vars: `POB_PROXY` (network proxy), `POB_GITHUB_MIRROR` (GitHub mirror prefix; file replacements still verify hashes/signatures), `POB_OFFLINE=1` (skip update checks), `POESESSID` (trade / private profile).
 - Documentation index: [`docs/README.md`](docs/README.md)
 - Full CLI command reference: [`docs/guides/commands.md`](docs/guides/commands.md)
 - Trade search & crafting bench guide: [`docs/guides/trade.md`](docs/guides/trade.md)
