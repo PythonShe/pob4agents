@@ -404,7 +404,7 @@ class BridgeWorker:
 
             assert self._proc is not None and self._proc.stdin is not None
 
-            pre_errors: dict[int, str] = {}
+            pre_errors: dict[int, BridgeError] = {}
             send_entries: list[tuple[int, int, str, dict[str, Any]]] = []
             lines: list[str] = []
             id_to_index: dict[int, int] = {}
@@ -412,16 +412,11 @@ class BridgeWorker:
             for idx, (method, raw_params) in enumerate(calls):
                 params = raw_params or {}
                 if method == "import_code":
-                    code_str = str(params.get("code") or "")
-                    validate_import_xml_guardrail(code_str)
-                    tv_mismatch = self._check_tree_version_mismatch(code_str) or stage_tree_versions_hint(
-                        code_str, self.game_dir
-                    )
-                    if tv_mismatch:
-                        err_msg = f"RPC 'import_code' failed: {tv_mismatch}"
+                    pre_error = self._import_precheck(str(params.get("code") or ""))
+                    if pre_error is not None:
                         if raise_on_error:
-                            raise BridgeError(err_msg)
-                        pre_errors[idx] = err_msg
+                            raise pre_error
+                        pre_errors[idx] = pre_error
                         continue
 
                 self._req_counter += 1
@@ -464,7 +459,7 @@ class BridgeWorker:
                 self._restore_after_failed_import_unlocked()
 
             if raise_on_error and first_error is not None:
-                raise BridgeError(first_error)
+                raise first_error
 
             return results
 
@@ -500,6 +495,15 @@ class BridgeWorker:
     def _check_tree_version_mismatch(self, code: str) -> str | None:
         return check_tree_version_mismatch(code, self.game_dir, self.pob_version)
 
+    def _import_precheck(self, code: str) -> BridgeError | None:
+        """Why `code` cannot be imported before the engine sees it, or None."""
+        validate_import_xml_guardrail(code)
+        mismatch = self._check_tree_version_mismatch(code)
+        if mismatch:  # the user's build needs a newer tree than this engine has
+            return BridgeRejectedError(f"RPC 'import_code' failed: {mismatch}", kind="request")
+        staging = stage_tree_versions_hint(code, self.game_dir)  # offline or a failed download: a fault
+        return BridgeError(f"RPC 'import_code' failed: {staging}") if staging else None
+
     def _restore_after_failed_import_unlocked(self) -> None:
         """Heal the slot after a failed import_code (which may leave b:Shutdown() active / no build loaded)."""
         try:
@@ -513,7 +517,7 @@ class BridgeWorker:
                         timeout=15.0,
                         recover=False,
                     )
-                except Exception as exc:
+                except BridgeRejectedError as exc:
                     put_code_aside(self, self.last_good_code, str(exc))
                     self._raw_call_unlocked("new_build", {}, timeout=10.0, recover=False)
         except Exception:
@@ -543,10 +547,10 @@ class BridgeWorker:
         with self._lock:
             if method == "import_code":
                 code = str((params or {}).get("code") or "")
-                validate_import_xml_guardrail(code)
-                tv_mismatch = self._check_tree_version_mismatch(code) or stage_tree_versions_hint(code, self.game_dir)
-                if tv_mismatch:
-                    raise BridgeError(f"RPC 'import_code' failed: {tv_mismatch}")
+                pre_error = self._import_precheck(code)
+                if pre_error is not None:
+                    raise pre_error
+                self.ensure_alive()  # so only a restart the import itself causes changes generation
                 generation = self.generation
                 try:
                     res = self._raw_call_unlocked(method, params, timeout=timeout)
@@ -557,7 +561,7 @@ class BridgeWorker:
                         self._restore_after_failed_import_unlocked()
                     tv_hint = self._check_tree_version_mismatch(code)
                     if tv_hint and tv_hint not in str(exc):
-                        raise BridgeError(f"{exc} | {tv_hint}") from exc
+                        exc.args = (f"{exc} | {tv_hint}",)
                     raise
             return self._raw_call_unlocked(method, params, timeout=timeout)
 

@@ -21,9 +21,17 @@ _Hang = Callable[[str, dict[str, Any]], bool]
 class _Engine:
     """Fake engine processes sharing one request log; `hang` decides which requests never get an answer."""
 
-    def __init__(self, hang: _Hang, *, max_launches: int = 40, errors: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        hang: _Hang,
+        *,
+        max_launches: int = 40,
+        errors: dict[str, Any] | None = None,
+        reject: Callable[[str, dict[str, Any]], Any] | None = None,
+    ) -> None:
         self.hang = hang
         self.errors = errors or {}
+        self.reject = reject or (lambda _m, _p: None)
         self.launches = 0
         self.max_launches = max_launches
         self.sent: list[tuple[int, str, Any]] = []
@@ -56,8 +64,9 @@ class _Proc:
             self.engine.sent.append((self.launch, method, params.get("code")))
             if self.engine.hang(method, params):
                 continue
-            if method in self.engine.errors:
-                self._q.put(json.dumps({"id": req["id"], "error": self.engine.errors[method]}) + "\n")
+            error = self.engine.errors.get(method) or self.engine.reject(method, params)
+            if error is not None:
+                self._q.put(json.dumps({"id": req["id"], "error": error}) + "\n")
                 continue
             result = {"caps": {}, "pobVersion": "2.69.0"} if method == "version" else {}
             self._q.put(json.dumps({"id": req["id"], "ok": True, "result": result}) + "\n")
@@ -249,3 +258,104 @@ def test_real_engine_rejects_a_bad_share_code_as_a_request_error(tmp_path: Path)
         assert w.call("get_build_info", {}) is not None
     finally:
         w.stop()
+
+
+_BAD_CODE = {"code": "lua_error", "message": "not a Path of Building code\nstack traceback:\n\t[C]: in function 'error'"}
+
+
+def _reject_code(code: str) -> Callable[[str, dict[str, Any]], Any]:
+    return lambda m, p: _BAD_CODE if m == "import_code" and p.get("code") == code else None
+
+
+def test_rejected_import_on_a_stopped_worker_still_heals(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    engine = _Engine(lambda _m, _p: False, reject=_reject_code("NEWCODE"))
+    w = _worker(tmp_path, monkeypatch, engine, slot="test")
+    w.start(restore_code="GOODCODE")
+    w._kill_unlocked()  # the engine died between calls
+    engine.sent.clear()
+
+    with pytest.raises(BridgeRejectedError):
+        w.call("import_code", {"code": "NEWCODE", "mode": "replace"})
+
+    # The start before the import restored GOODCODE, but the rejected import (b:Shutdown()) undid it.
+    methods = [(m, c) for _l, m, c in engine.sent]
+    after = methods[methods.index(("import_code", "NEWCODE")) + 1 :]
+    assert after == [("new_build", None), ("import_code", "GOODCODE")]
+    assert w.last_good_code == "GOODCODE"
+    w.stop()
+
+
+def test_slow_reimport_during_heal_is_recovered_not_put_aside(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hung = {"n": 0}
+
+    def hang_heal_once(m: str, p: dict[str, Any]) -> bool:
+        # The heal's re-import (mode replace) is slow once; the restart's boot restore is fine.
+        if m == "import_code" and p.get("code") == "GOODCODE" and p.get("mode") == "replace" and hung["n"] == 0:
+            hung["n"] += 1
+            return True
+        return False
+
+    engine = _Engine(hang_heal_once, reject=_reject_code("NEWCODE"))
+    w = _worker(tmp_path, monkeypatch, engine)
+    w.start(restore_code="GOODCODE")
+
+    with pytest.raises(BridgeRejectedError):
+        w.call("import_code", {"code": "NEWCODE", "mode": "replace"})
+
+    assert w.restore_failed is None
+    assert w.last_good_code == "GOODCODE"
+    assert not (tmp_path / "rt" / "slot_main.restore_failed.txt").exists()
+    assert w.is_running and engine.launches == 2
+    w.stop()
+
+
+def test_tree_version_hint_keeps_the_rejection_kind(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    engine = _Engine(lambda _m, _p: False, reject=_reject_code("NEWCODE"))
+    w = _worker(tmp_path, monkeypatch, engine, slot="test")
+    w.start(restore_code="")
+    hint = "Build requires treeVersion='9_99', which is newer than local engine max TreeData='3_26'."
+    checks = {"n": 0}
+
+    def hint_after_the_rpc(*_a: Any) -> str | None:
+        checks["n"] += 1
+        return hint if checks["n"] > 1 else None
+
+    monkeypatch.setattr(bc, "check_tree_version_mismatch", hint_after_the_rpc)
+    with pytest.raises(BridgeRejectedError) as caught:
+        w.call("import_code", {"code": "NEWCODE", "mode": "replace"})
+    assert caught.value.kind == "request" and hint in str(caught.value)
+
+    # The pre-check of the user's own code is a bad request too, not an engine fault.
+    monkeypatch.setattr(bc, "check_tree_version_mismatch", lambda *_a: hint)
+    with pytest.raises(BridgeRejectedError) as pre:
+        w.call("import_code", {"code": "OTHER", "mode": "replace"})
+    assert pre.value.kind == "request" and hint in str(pre.value)
+    with pytest.raises(BridgeRejectedError) as pre_batch:
+        w.call_batch([("import_code", {"code": "OTHER", "mode": "replace"})])
+    assert pre_batch.value.kind == "request"
+    w.stop()
+
+
+def test_batch_rejection_is_classified_through_the_table(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    engine = _Engine(
+        lambda _m, _p: False,
+        reject=_reject_code("NEWCODE"),
+        errors={"get_calcs": {"code": "lua_error", "message": "bridge.lua:9: attempt to index a nil value"}},
+    )
+    w = _worker(tmp_path, monkeypatch, engine, slot="test")
+    w.start(restore_code="")
+
+    with pytest.raises(BridgeRejectedError) as bad_input:
+        w.call_batch([("get_build_info", {}), ("import_code", {"code": "NEWCODE", "mode": "replace"})])
+    assert bad_input.value.kind == "request" and bad_input.value.code == "lua_error"
+    assert "stack traceback" not in str(bad_input.value)
+
+    with pytest.raises(BridgeRejectedError) as engine_bug:
+        w.call_batch([("get_calcs", {})])
+    assert engine_bug.value.kind == "daemon"
+
+    results = w.call_batch([("import_code", {"code": "NEWCODE", "mode": "replace"})], raise_on_error=False)
+    assert results[0]["ok"] is False and "not a Path of Building code" in results[0]["error"]
+    w.stop()

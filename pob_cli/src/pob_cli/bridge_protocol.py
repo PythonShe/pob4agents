@@ -487,36 +487,37 @@ def collect_batch_responses(
 
 def decode_batch_responses(
     calls: list[tuple[str, dict[str, Any] | None]],
-    pre_errors: dict[int, str],
+    pre_errors: dict[int, BridgeError],
     send_entries: list[tuple[int, int, str, dict[str, Any]]],
     raw_responses: dict[int, dict[str, Any]],
     *,
     check_tv_mismatch: Callable[[str], str | None],
     sync_state: Callable[[str, dict[str, Any] | None, dict[str, Any]], None],
-) -> tuple[list[dict[str, Any]], str | None, bool]:
-    """Assemble ordered batch RPC results, capturing first error and failed import_code flag."""
+) -> tuple[list[dict[str, Any]], BridgeError | None, bool]:
+    """Assemble ordered batch RPC results, capturing the first error (classified like a single RPC's)."""
     results: list[dict[str, Any]] = [{} for _ in range(len(calls))]
-    first_error: str | None = None
+    first_error: BridgeError | None = None
     had_import_error = False
 
-    for idx, err_msg in pre_errors.items():
+    for idx, pre_exc in pre_errors.items():
+        err_msg = str(pre_exc)
         results[idx] = {"ok": False, "error": err_msg, "_error": err_msg, "method": calls[idx][0]}
         if first_error is None:
-            first_error = err_msg
+            first_error = pre_exc
 
     for idx, _, method, params in send_entries:
         msg = raw_responses[idx]
         if msg.get("ok") is False or ("error" in msg and msg["error"] is not None):
             err_text = format_rpc_error(msg.get("error"))
-            full_err = f"RPC '{method}' failed: {err_text}"
+            exc = rpc_rejection(method, msg.get("error"))
             if method == "import_code":
                 had_import_error = True
                 tv_hint = check_tv_mismatch(str(params.get("code") or ""))
-                if tv_hint and tv_hint not in full_err:
-                    full_err = f"{full_err} | {tv_hint}"
+                if tv_hint and tv_hint not in str(exc):
+                    exc.args = (f"{exc} | {tv_hint}",)
             results[idx] = {"ok": False, "error": err_text, "_error": err_text, "method": method}
             if first_error is None:
-                first_error = full_err
+                first_error = exc
         else:
             result = msg.get("result")
             res_dict = result if isinstance(result, dict) else {"value": result}
