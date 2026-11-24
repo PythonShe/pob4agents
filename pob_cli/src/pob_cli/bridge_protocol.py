@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import collections
 import json
+import os
 import queue
 import re
 import subprocess
@@ -189,7 +190,11 @@ def write_slot_state(
             "rev": int(rev),
             "updated_at": time.time(),
         }
-        state_path.write_text(json.dumps(payload), encoding="utf-8")
+        # Temp file, then rename: a daemon killed mid-write would otherwise leave half a JSON, and
+        # the slot would come back empty with its undo history gone.
+        tmp_path = state_path.with_suffix(f".{os.getpid()}.tmp")
+        tmp_path.write_text(json.dumps(payload), encoding="utf-8")
+        os.replace(tmp_path, state_path)
     except Exception:
         pass
 

@@ -269,7 +269,8 @@ URL_GATE_RULES: tuple[UrlGateRule, ...] = (
         rule_id="URL_POE2_NINJA",
         belongs_to="poe2",
         pattern=re.compile(
-            r"^(?:https?://)?(?:(?:www\.)?poe\.ninja/poe2(?=[/?#]|$)|(?:www\.)?poe2\.ninja(?=[/?#:]|$))",
+            # The optional segment is poe.ninja's language prefix (poe.ninja/zh-tw/poe2/...).
+            r"^(?:https?://)?(?:(?:www\.)?poe\.ninja/(?:[a-z]{2}(?:-[a-z]{2})?/)?poe2(?=[/?#]|$)|(?:www\.)?poe2\.ninja(?=[/?#:]|$))",
             re.IGNORECASE,
         ),
         label="poe.ninja/poe2 (PoE2)",

@@ -44,7 +44,7 @@ pob updates itself separately (`updater/self_update.py`, `cli_self_update.py`). 
 
 On macOS and Linux, bootstrap also installs `engine/bin/luajit` and `engine/bin/lua-utf8.so` (`updater/posix_runtime.py`), taking the first that works: the copy inside a standalone build (`_internal/runtime/bin`); `pob4agents-runtime-<version>-<platform>.tar.gz` from this pob's release, then the latest one, trusted only through that release's signed `SHA256SUMS.txt`; or a local compile of LuaJIT and lua-utf8 from source tarballs pinned by SHA-256 (`constants.py`, and `build_posix_runtime.sh`, which a test keeps equal). Each candidate must pass a self-test (`+=`, `..=`, `require("lua-utf8")`) first. pob before 0.9 asked for `pob-runtime-<platform>.tar.gz` without any check; no release publishes that name, so those versions keep compiling.
 
-Runtime state in `<POB_RUNTIME_DIR>/`: `daemon.json`, `update_state.json`, `slot_<slug>.json`, `turn_receipts.jsonl`, `hook_turn_<hash>.json`, and a shared `cache/` with `gamedata_<pobVer>_<dataVer>.sqlite`, `ninja_*.json`, `poedb_*.json`, `trade_ratelimit.json` and `trade_stats*.json`.
+Runtime state in `<POB_RUNTIME_DIR>/`: `daemon.json`, `update_state.json`, `slot_<slug>.json`, `turn_receipts.jsonl`, `hook_turn_<hash>.json`, and a shared `cache/` with `gamedata_<pobVer>_<dataVer>.sqlite`, `ninja_*.json`, `poedb_*.json`, `trade_ratelimit.json` and `trade_stats*.json`. A rebuilt `gamedata_*` or `treedata_*` index deletes the superseded ones, keeping the newest other file for a second engine that shares the cache.
 
 ## Environment variables
 
@@ -55,7 +55,7 @@ Runtime state in `<POB_RUNTIME_DIR>/`: `daemon.json`, `update_state.json`, `slot
 | `POB_CACHE_DIR` | Game-data index and online query cache |
 | `POB_SLOT` | Default build slot slug |
 | `POB_PROXY` / `HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY` | Proxy for every download and query |
-| `POB_GITHUB_MIRROR` | Mirror prefix for GitHub downloads in `bootstrap` / `update` |
+| `POB_GITHUB_MIRROR` | Mirror prefix for GitHub downloads in `bootstrap` / `update`. The routine check (latest tag, `manifest.xml` ETag) goes through the mirror. A manifest that names files to replace, with the hashes they are checked against, is taken from GitHub itself, and the mirror's copy only when GitHub does not answer (`updater/remote.py`, `_github_first`) |
 | `POB_OFFLINE=1` | Skip update checks (same as `pob --offline`) |
 | `POB_NO_UPDATE_NOTICE=1` | No "pob X is available" line on interactive terminals |
 | `POB_LEGACY_DIR` | Read-only legacy PobTools seed |
@@ -70,6 +70,8 @@ Runtime state in `<POB_RUNTIME_DIR>/`: `daemon.json`, `update_state.json`, `slot
 
 - Both sides are folded to Simplified with `game_data.fold_han` (mutator search folds, `analyzer/calcs.py`, class and ascendancy, item DB, gems).
 - A Chinese entity name that still finds nothing is retried by its English name from `game_data.english_for_zh`, because the engine always carries the English name.
+- The local index folds the same way: `game_data._fold_search_text` builds every `*_lower` column and folds every `pob data`, `pob ground` and `--slot` query, and `pob bench` search and trade stat names fold too, so 圖騰 finds 图腾. Fold both sides, never the query alone: Simplified text keeps a few foldable characters (覆盖 would turn into 复盖 and miss). A change to the fold bumps `SCHEMA_VERSION` and `TREE_SCHEMA_VERSION`, which rebuilds the index.
+- Equipment slot names fold at the caller. The slot aliases live in `guardrails/` (L0), which cannot import `fold_han` (L1), so `analyzer.resolve_slot_name`, the mutators' slot lookup, `bench.slot_key` and turn receipts fold before they call `normalize_equipment_slot`; a new caller must do the same. The reply scanner stays in L0 and only knows the slot words spelled out in its own tables.
 
 `game_data/tables_han.py` is generated from Unicode's Unihan data by `pob_cli/scripts/gen_han_fold.py <Unihan.zip>`; hand-picked PoE terms in `tw_norm.py` override it.
 
@@ -133,7 +135,7 @@ Runtime state in `<POB_RUNTIME_DIR>/`: `daemon.json`, `update_state.json`, `slot
 - PoE2 terms (Table D): `Uncut *`, `Distilled *` / 涂灌, `Waystone` / 引路石, `Soul Core` / `{rune}`, `--slot focus` / `quarterstaff` / `charm1`, `Spirit` / 精魂.
 - CLI traps: `pob rune`, `pob instill`, `pob item charm`, `pob item instill`.
 
-It never blocks PoE1-legal terms: `Elemental Focus`, `Combat Focus`, `while Focused` / 专注, `Titanium Spirit Shield` / 灵盾, `Summon Raging Spirit`, `Spirit Offering`, `Distilled Perfection`, `Ancient Waystones`, and the level 45 staff base `Quarterstaff` outside `SLOT` / `CATEGORY`.
+It never blocks PoE1-legal terms: `Elemental Focus`, `Combat Focus`, `while Focused` / 专注, `Titanium Spirit Shield` / 灵盾, `Summon Raging Spirit`, `Spirit Offering`, `Distilled Perfection`, `Ancient Waystones`, and, outside `SLOT` / `CATEGORY`, the level 45 staff base `Quarterstaff` and the `Buckler` shield bases (`Crusader Buckler`).
 
 ## Adding a command
 

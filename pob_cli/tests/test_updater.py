@@ -518,6 +518,87 @@ def test_clean_bootstrap_from_github_dual_upstream(tmp_path: Path, monkeypatch: 
     assert (target / "PoE1" / "Modules" / "Main.lua").read_bytes() == pob_main
 
 
+def test_mirror_serves_the_routine_check_but_hashes_come_from_github(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Hashes read through a mirror prove nothing about files that mirror serves."""
+    from pob_cli.updater import UpdateError, fetch_pob_manifest_remote, fetch_pobtools_latest_info
+    from pob_cli.updater.remote import _download_and_stage_release_zip
+
+    mirror = "https://mirror.example.com"
+    manifest_url = f"{POBTOOLS_DOWNLOAD_BASE}/v1.8.12/PobTools-manifest-v1.8.12.json"
+
+    def pob_xml(version: str) -> str:
+        return (
+            "<?xml version='1.0' encoding='UTF-8'?><PoBVersion>"
+            f'<Version number="{version}" />'
+            '<Source part="program" url="https://raw.githubusercontent.com/PathOfBuildingCommunity/PathOfBuilding/{branch}/src/" />'
+            f'<File name="Modules/Main.lua" part="program" sha1="{hashlib.sha1(b"main").hexdigest()}" />'
+            "</PoBVersion>"
+        )
+
+    seen: list[str] = []
+    github_up = True
+    github_cut_off = False
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        seen.append(url)
+        via_mirror = url.startswith(mirror)
+        if not via_mirror and not github_up:
+            raise httpx.ConnectError("GitHub unreachable")
+        plain = url.removeprefix(mirror + "/")
+        if plain == POBTOOLS_LATEST_URL:
+            return httpx.Response(302, headers={"Location": "https://github.com/x/y/releases/tag/v1.8.12"})
+        if plain == manifest_url:
+            return httpx.Response(200, json={"version": "1.8.12", "assets": []})
+        if plain == POB_MANIFEST_URL:
+            if request.headers.get("If-None-Match"):
+                return httpx.Response(304)
+            if github_cut_off and not via_mirror:
+                return httpx.Response(200, text=pob_xml("2.68.1")[:60])
+            return httpx.Response(200, text=pob_xml("9.9.9" if via_mirror else "2.68.1"))
+        return httpx.Response(200, content=b"not the zip the manifest hashed")
+
+    _patch_updater_http(monkeypatch, handler)
+
+    def requests_of(call: Any) -> tuple[Any, list[str]]:
+        seen.clear()
+        return call(), list(seen)
+
+    # The routine check (a tag, or a 304) stays on the mirror: no extra round trip, no GitHub timeout.
+    assert requests_of(lambda: fetch_pobtools_latest_info(mirror=mirror, fetch_manifest=False))[1] == [
+        f"{mirror}/{POBTOOLS_LATEST_URL}"
+    ]
+    assert requests_of(lambda: fetch_pob_manifest_remote(mirror=mirror, etag="abc")) == (
+        ("not_modified", None, "abc"),
+        [f"{mirror}/{POB_MANIFEST_URL}"],
+    )
+
+    # Anything that carries hashes comes from GitHub itself, whatever the mirror says.
+    assert requests_of(lambda: fetch_pobtools_latest_info(mirror=mirror))[1] == [POBTOOLS_LATEST_URL, manifest_url]
+    (status, manifest, _etag), urls = requests_of(lambda: fetch_pob_manifest_remote(mirror=mirror))
+    assert (status, manifest.version) == ("ok", "2.68.1")
+    assert urls == [f"{mirror}/{POB_MANIFEST_URL}", POB_MANIFEST_URL]
+
+    # A cut-off answer from GitHub is no answer: the mirror's copy stands.
+    github_cut_off = True
+    assert fetch_pob_manifest_remote(mirror=mirror)[1].version == "9.9.9"
+    github_cut_off = False
+
+    # Without a route to GitHub the mirror's copy is used, so those users can still update.
+    github_up = False
+    info, urls = requests_of(lambda: fetch_pobtools_latest_info(mirror=mirror))
+    assert info["version"] == "1.8.12"
+    assert urls[-2:] == [f"{mirror}/{POBTOOLS_LATEST_URL}", f"{mirror}/{manifest_url}"]
+    assert fetch_pob_manifest_remote(mirror=mirror)[1].version == "9.9.9"
+
+    # The engine zip itself may come through the mirror, but never without a hash to check it by.
+    for asset in ({"name": "PobTools-1.8.12.zip"}, {"name": "PobTools-1.8.12.zip", "sha256": "00" * 32}):
+        with pytest.raises(UpdateError, match="SHA256 mismatch"):
+            _download_and_stage_release_zip("v1.8.12", asset, tmp_path, mirror=mirror)
+
+
 def test_posix_engine_validation_command_and_manifest_filtering(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -846,8 +927,13 @@ def test_get_shared_cache_dir_priority_and_isolation(
     monkeypatch.setenv("POB_ROOT", str(other_eng))
     assert get_shared_cache_dir(swarm_rt) == swarm_rt / "cache"
 
-    # 4. If parent ALREADY has an existing `cache/` directory -> shares it
+    # 4. A folder next to the engine that is only *named* cache is somebody else's: leave it alone
     (tmp_path / "custom_parent" / "cache").mkdir()
+    (tmp_path / "custom_parent" / "cache" / "thumbnails.db").write_bytes(b"not ours")
+    assert get_shared_cache_dir(swarm_rt) == swarm_rt / "cache"
+
+    # 4a. Once pob has written to it (an index or a trade cache file) -> shares it
+    (tmp_path / "custom_parent" / "cache" / "trade_ratelimit.json").write_text("{}", encoding="utf-8")
     assert get_shared_cache_dir(swarm_rt) == tmp_path / "custom_parent" / "cache"
 
     # 4b. Explicit pob_root parameter takes precedence over env POB_ROOT (isolates legacy/custom engines)

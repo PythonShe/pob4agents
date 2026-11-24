@@ -308,6 +308,14 @@ def resolve_engine_root(
     return managed
 
 
+def _is_pob_cache(cache_dir: Path) -> bool:
+    """Whether pob has written to this folder: it holds a game-data index or a trade cache file."""
+    try:
+        return any(cache_dir.glob("gamedata_*.sqlite")) or any(cache_dir.glob("trade_*.json"))
+    except OSError:
+        return False
+
+
 def get_shared_cache_dir(
     runtime_dir: Path | None = None,
     *,
@@ -318,9 +326,11 @@ def get_shared_cache_dir(
     Priority:
       1. `POB_CACHE_DIR` environment variable if set.
       2. If the effective engine dir (`pob_root` if explicitly given, else `resolve_engine_root(runtime_dir)`)
-         lives outside `runtime_dir` and its parent already contains `cache/` or is named
-         `.runtime` / `pob4agents` / `pob-agent-tools`, share `<engine_dir.parent>/cache` (falling back to
-         `<runtime_dir>/cache` on read-only/permission errors).
+         lives outside `runtime_dir` and its parent is named `.runtime` / `pob4agents` /
+         `pob-agent-tools`, or already holds a `cache/` that pob has written to, share
+         `<engine_dir.parent>/cache` (falling back to `<runtime_dir>/cache` on read-only/permission
+         errors). A folder that is merely called `cache` is left alone: an engine unpacked into
+         Downloads must not turn an unrelated `Downloads/cache` into pob's cache.
       3. Fallback `<runtime_dir>/cache`.
     """
     env_cache = os.environ.get("POB_CACHE_DIR", "").strip()
@@ -351,7 +361,9 @@ def get_shared_cache_dir(
     if not inside_rt:
         eng_parent = eng_res.parent
         parent_cache = eng_parent / "cache"
-        if parent_cache.is_dir() or eng_parent.name.lower() in (".runtime", "pob4agents", "pob-agent-tools"):
+        if eng_parent.name.lower() in (".runtime", "pob4agents", "pob-agent-tools") or _is_pob_cache(
+            parent_cache
+        ):
             try:
                 parent_cache.mkdir(parents=True, exist_ok=True)
                 return parent_cache

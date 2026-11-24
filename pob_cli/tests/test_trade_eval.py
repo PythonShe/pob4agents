@@ -1453,6 +1453,8 @@ def test_eval_trade_items_sourceless_explode_group_and_chinese_raw_disable_fast_
         "稀 有 度: 传奇\nSpider Ring\n潜能之戒\nImplicits: 0\n赋予 20 级蜘蛛之势技能",
         "Rarity: RARE\nCN Explode\n星芒战铠\nImplicits: 0\n被击杀的敌人会爆炸",
         "Rarity: RARE\nCN Abyss\n深渊腰带\nImplicits: 0\n拥有 1 个深渊插槽",
+        "Rarity: RARE\nTW Abyss\n深淵腰帶\nImplicits: 0\n擁有 1 個深淵插槽",
+        "Rarity: RARE\nTW Grant\n潛能之戒\nImplicits: 0\n賦予 20 級蜘蛛之勢技能",
     ):
         w_cx = _FakeBatchWorker()
         res_cx = eval_trade_items(

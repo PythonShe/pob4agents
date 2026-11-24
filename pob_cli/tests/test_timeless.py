@@ -383,6 +383,8 @@ def test_describe_worker_uses_call_batch_and_chinese_fallback(game_dir: Path) ->
     assert timeless._resolve_jewel("致命的骄傲", jewels, eng) == "Lethal Pride"
     assert timeless._resolve_jewel("辉煌的虚荣", jewels, eng) == "Glorious Vanity"
     assert timeless._resolve_jewel("溃烂复仇", jewels, eng) == "Festering Vengeance"
+    # Traditional spellings without a hand-written alias resolve through the fold.
+    assert timeless._resolve_jewel("潰爛復仇", jewels, eng) == "Festering Vengeance"
 
 
 class FakeEngine:

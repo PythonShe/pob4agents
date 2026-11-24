@@ -7,6 +7,7 @@ from collections.abc import Callable
 from typing import Any
 
 from ..errors import BootstrapMissingError
+from ..game_data import fold_han
 from .scoring import (
     DEFAULT_WEIGHTS as DEFAULT_WEIGHTS,
 )
@@ -242,7 +243,7 @@ _PARTNER_WEAPON_SLOT: dict[str, str] = {
 
 def _is_complex_trade_item(raw_text: str, slot_name: str | None) -> bool:
     """Return True if raw item text could mutate 2H/offhand slots, granted skill groups, abyssal sockets, or tree radius."""
-    if _COMPLEX_TRADE_RAW_RE.search(raw_text):
+    if _COMPLEX_TRADE_RAW_RE.search(fold_han(raw_text)):  # folded: the Chinese keywords are Simplified
         return True
     if slot_name in _WEAPON_SLOTS and _TWO_HANDED_RAW_RE.search(raw_text):
         return True

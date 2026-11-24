@@ -76,6 +76,26 @@ def resolve_runtime_dir(runtime_dir: Path | None = None) -> Path:
     return get_runtime_dir(runtime_dir)
 
 
+def _prune_old_indexes(cache_dir: Path, pattern: str, keep: Path) -> None:
+    """Delete superseded index files, keeping `keep` and the newest of the others.
+
+    Every engine or dictionary update writes a new index under a new name (the game-data one is
+    over 50 MB) and nothing removed the old ones. One older file stays, so a second engine that
+    shares this cache dir does not rebuild each time the two take turns.
+    """
+    try:
+        others = sorted(
+            (p for p in cache_dir.glob(pattern) if p != keep), key=lambda p: p.stat().st_mtime, reverse=True
+        )
+    except OSError:
+        return
+    for stale in others[1:]:
+        try:
+            stale.unlink()
+        except OSError:  # still open in another process (Windows)
+            pass
+
+
 def _shared_cache_dir(
     runtime_dir: Path | None = None,
     *,

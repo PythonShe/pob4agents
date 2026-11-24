@@ -75,6 +75,11 @@ def _affix_type(entry: dict[str, Any]) -> str | None:
     return None
 
 
+def _base_key(base_type: str) -> str:
+    """The index's own fold: a pasted "Maelström Staff" must find the base stored as "maelstrom staff"."""
+    return game_data._fold_search_text(base_type)
+
+
 def _bench_slot(
     slot: str | None, base_type: str, *, pob_dir: Path | None, runtime_dir: Path | None
 ) -> str | None:
@@ -86,7 +91,7 @@ def _bench_slot(
     try:
         row = conn.execute(
             "SELECT item_type FROM bases WHERE name_lower=? OR zh_lower=? LIMIT 1",
-            (base_type.lower(), base_type.lower()),
+            (_base_key(base_type), _base_key(base_type)),
         ).fetchone()
     finally:
         conn.close()
@@ -103,7 +108,7 @@ def _load_entries(
     try:
         base_row = conn.execute(
             "SELECT data_json FROM bases WHERE name_lower=? OR zh_lower=? LIMIT 1",
-            (base_type.lower(), base_type.lower()),
+            (_base_key(base_type), _base_key(base_type)),
         ).fetchone()
         rows = conn.execute(
             "SELECT source, weights_json, zero_weights_json, types_json, data_json "

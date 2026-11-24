@@ -29,7 +29,7 @@ pob items [--slot "Weapon 1"|"#1"] [--all] [--raw] [--target <slug>] [--json]   
 pob item inspect (--slot S | --raw "<item text>" | --file f) [--want "Cold Resistance"]... [--target <slug>] [--json] # Rare-item affix occupancy and bench candidates; uncertain matches never claim free slots
 pob skills [--group main|1|"label"] [--target <slug>] [--json]                         # Skill groups or per-gem DPS tooltips
 pob tree [--search "<kw>" ...] [--type Keystone|Notable|Mastery|Socket|Ascendancy ...] [--allocated|--unallocated] [--max-cost N] [--show-path] [--masteries] [--socket-radius <id|#1>] [--json]
-pob calc "<kw1>" ["<kw2>" ...] [--limit 20] [--no-breakdown] [--target <slug>] [--json] # Variadic EN/ZH get_calcs + calcs_breakdown formulas/tables
+pob calc "<kw1>" ["<kw2>" ...] [--limit 20] [--no-breakdown] [--target <slug>] [--json] # Variadic EN/ZH get_calcs + calcs_breakdown formulas/tables; rows are for the skill PoB's Calcs tab selects (named in the output as `calcsSkill`, with a warning when it is not the main skill)
 
 # What-If Simulation (0-residue rollback by default) & Persistent Mutation (--apply)
 pob item try [--slot S] (--raw "<text>" | --file f) [--tooltip-only] [--apply]

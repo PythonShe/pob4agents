@@ -13,6 +13,7 @@ from typing import Any
 from .constants import _INDEX_BUILD_LOCK, _VALID_INDEX_CACHE, SCHEMA_VERSION
 from .parsers_items import _parse_bases, _parse_mods, _parse_uniques
 from .paths import (
+    _prune_old_indexes,
     _resolve_poe1_data_dirs,
     _shared_cache_dir,
     detect_versions,
@@ -393,6 +394,7 @@ def ensure_gamedata_index(
                     raise last_perm_err
 
             _VALID_INDEX_CACHE.add(cache_key)
+            _prune_old_indexes(cache_dir, "gamedata_*.sqlite", db_path)
             from ..guardrails import GuardrailScope, check_input
 
             for _sc in (GuardrailScope.STAT_QUERY, GuardrailScope.GEM_NAME, GuardrailScope.DATA_QUERY):

@@ -10,7 +10,7 @@ from typing import Any
 
 from ..updater import detect_source_checkout_root, get_runtime_dir
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 _INDEX_BUILD_LOCK = threading.RLock()
 
 _POB_ESCAPE_RE = re.compile(r"\^x[0-9A-Fa-f]{6}|\^\d")

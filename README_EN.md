@@ -166,7 +166,7 @@ Common environment variables:
 | `POB_CACHE_DIR` | Override the local game database and online query cache directory |
 | `POB_SLOT` | Default build slot if `--target` is omitted; defaults to `main` |
 | `POB_PROXY` | HTTP, HTTPS, or SOCKS5 proxy; `HTTPS_PROXY` and `ALL_PROXY` are also supported |
-| `POB_GITHUB_MIRROR` | Mirror prefix for GitHub downloads during `bootstrap` and `update` |
+| `POB_GITHUB_MIRROR` | Mirror prefix for GitHub downloads during `bootstrap` and `update`. The routine version check goes through the mirror. Before files are replaced, the hash lists are read from GitHub itself, and the mirror's copy is used only when GitHub cannot be reached; the engine files are then only as trustworthy as the mirror |
 | `POB_OFFLINE` | Set to `1` to skip startup and scheduled GitHub update checks; equivalent to global `--offline` |
 | `POB_HOOK_DISABLE_V5` | Set to `1` to disable the Gate 3 V5 web-research verification gate (independent of `POB_OFFLINE`) |
 | `POESESSID` / `POE_COOKIE` | Optional when the official trade API returns 401/403; provide them only as environment variables, never as CLI arguments or log entries |
@@ -284,7 +284,8 @@ pob tree --search "最大生命" "法术压制" --unallocated --max-cost 4 --sho
 pob tree --type Mastery --allocated --masteries
 pob tree --socket-radius 61419
 
-# Inspect values and sources on PoB's Calcs tab; multiple terms are accepted
+# Inspect values and sources on PoB's Calcs tab; multiple terms are accepted.
+# The tab keeps its own skill selection: the output names that skill and warns when it is not the main one
 pob calc "Average Hit" "Spell Suppression" "Mana Regen"
 ```
 

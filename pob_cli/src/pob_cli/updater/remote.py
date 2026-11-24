@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import shutil
 import sys
@@ -24,6 +25,7 @@ from .constants import (
     PobManifest,
     UpdateError,
     _to_httpx_timeout,
+    resolve_mirror,
     rewrite_github_url,
 )
 from .manifest import build_manifest_file_url, parse_pob_manifest
@@ -42,6 +44,23 @@ def _extract_tag_from_location(location: str) -> str:
     raise UpdateError(f"Could not extract release tag from Location header: {location!r}")
 
 
+def _github_first(fetch: Any, fallback: Any) -> Any:
+    """Take hash-bearing metadata from GitHub itself; `fallback()` only when GitHub does not answer.
+
+    Downloads are checked against these hashes, so a mirror that also served them could swap a
+    file and its hash together. With no route to GitHub the mirror's copy is used, and the engine
+    files are then only as trustworthy as that mirror.
+    """
+    from xml.etree.ElementTree import ParseError  # a cut-off manifest.xml; not a ValueError
+
+    import httpx
+
+    try:
+        return fetch(lambda url: url)
+    except (httpx.HTTPError, UpdateError, ValueError, ParseError):
+        return fallback()
+
+
 def fetch_pobtools_latest_info(
     *,
     proxy: str | None = None,
@@ -51,7 +70,21 @@ def fetch_pobtools_latest_info(
 ) -> dict[str, Any]:
     """Resolve latest PobTools-zh tag via 302 redirect (NEVER api.github.com) and optional manifest JSON."""
     eff_timeout = _to_httpx_timeout(_CHECK_TIMEOUT_SPEC if timeout is None else timeout)
-    latest_url = rewrite_github_url(POBTOOLS_LATEST_URL, mirror=mirror)
+    via_mirror = functools.partial(rewrite_github_url, mirror=mirror)
+
+    def _fetch(via: Any) -> dict[str, Any]:
+        return _fetch_pobtools_latest_info(via, proxy, eff_timeout, fetch_manifest)
+
+    if not fetch_manifest or not resolve_mirror(mirror):
+        # The tag alone gates no download, so the routine check stays on the mirror.
+        return _fetch(via_mirror)
+    return _github_first(_fetch, lambda: _fetch(via_mirror))
+
+
+def _fetch_pobtools_latest_info(
+    via: Any, proxy: str | None, eff_timeout: Any, fetch_manifest: bool
+) -> dict[str, Any]:
+    latest_url = via(POBTOOLS_LATEST_URL)
     make_client = _pkg()._make_http_client
 
     with make_client(timeout=eff_timeout, proxy=proxy, follow_redirects=False) as client:
@@ -73,10 +106,7 @@ def fetch_pobtools_latest_info(
     if not fetch_manifest:
         return info
 
-    manifest_url = rewrite_github_url(
-        f"{POBTOOLS_DOWNLOAD_BASE}/{tag}/PobTools-manifest-{tag}.json",
-        mirror=mirror,
-    )
+    manifest_url = via(f"{POBTOOLS_DOWNLOAD_BASE}/{tag}/PobTools-manifest-{tag}.json")
     with make_client(timeout=eff_timeout, proxy=proxy, follow_redirects=True) as client:
         mresp = client.get(manifest_url)
         mresp.raise_for_status()
@@ -87,9 +117,8 @@ def fetch_pobtools_latest_info(
                 info["version"] = str(manifest_data["version"]).strip()
             data_tag = manifest_data.get("dataTag")
             if data_tag:
-                data_manifest_url = rewrite_github_url(
-                    f"{POBTOOLS_DOWNLOAD_BASE}/{data_tag}/PobTools-manifest-{data_tag}.json",
-                    mirror=mirror,
+                data_manifest_url = via(
+                    f"{POBTOOLS_DOWNLOAD_BASE}/{data_tag}/PobTools-manifest-{data_tag}.json"
                 )
                 dresp = client.get(data_manifest_url)
                 if dresp.status_code == 200:
@@ -109,19 +138,24 @@ def fetch_pob_manifest_remote(
     Returns ("not_modified", None, etag) on 304, or ("ok", PobManifest, new_etag) on 200.
     """
     eff_timeout = _to_httpx_timeout(_CHECK_TIMEOUT_SPEC if timeout is None else timeout)
-    url = rewrite_github_url(POB_MANIFEST_URL, mirror=mirror)
     headers: dict[str, str] = {}
     if etag:
         headers["If-None-Match"] = etag
 
-    with _pkg()._make_http_client(timeout=eff_timeout, proxy=proxy, follow_redirects=True) as client:
-        resp = client.get(url, headers=headers)
-        if resp.status_code == 304:
-            return ("not_modified", None, resp.headers.get("etag") or etag)
-        resp.raise_for_status()
-        new_etag = resp.headers.get("etag") or etag
-        manifest = parse_pob_manifest(resp.text)
-        return ("ok", manifest, new_etag)
+    def _fetch(via: Any) -> tuple[str, PobManifest | None, str | None]:
+        with _pkg()._make_http_client(timeout=eff_timeout, proxy=proxy, follow_redirects=True) as client:
+            resp = client.get(via(POB_MANIFEST_URL), headers=headers)
+            if resp.status_code == 304:
+                return ("not_modified", None, resp.headers.get("etag") or etag)
+            resp.raise_for_status()
+            new_etag = resp.headers.get("etag") or etag
+            return ("ok", parse_pob_manifest(resp.text), new_etag)
+
+    result = _fetch(functools.partial(rewrite_github_url, mirror=mirror))
+    if result[0] != "ok" or not resolve_mirror(mirror):
+        return result
+    # The mirror reports a new manifest: it names the files to replace and their hashes.
+    return _github_first(_fetch, lambda: result)
 
 
 def _download_bytes_with_retry(
@@ -301,10 +335,12 @@ def _download_and_stage_release_zip(
         timeout=_to_httpx_timeout(_ASSET_TIMEOUT_SPEC), proxy=proxy, follow_redirects=True
     ) as client:
         data = _download_bytes_with_retry(client, url, retries=ASSET_MAX_RETRIES)
-    if expected_sha256:
-        actual = hashlib.sha256(data).hexdigest().lower()
-        if actual != expected_sha256:
-            raise UpdateError(f"SHA256 mismatch for '{name}': expected {expected_sha256}, got {actual}")
+    # No hash in the manifest is a refusal, not a pass: this zip holds the engine that pob runs.
+    actual = hashlib.sha256(data).hexdigest().lower()
+    if actual != expected_sha256:
+        raise UpdateError(
+            f"SHA256 mismatch for '{name}': expected {expected_sha256 or 'a sha256 in the manifest'}, got {actual}"
+        )
     zip_tmp.write_bytes(data)
 
     extract_root = staging_dir / "_extract" / Path(name).stem

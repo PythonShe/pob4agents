@@ -72,12 +72,16 @@ def normalize_tw_query(text: str) -> str:
 
 
 def _fold_search_text(text: str) -> str:
-    """Fold Unicode diacritics (NFKD), curly apostrophes/dashes, and case for search matching."""
+    """Fold diacritics (NFKD), curly apostrophes/dashes, case and Traditional Chinese for matching.
+
+    Every index column and every query goes through this, so both sides fold alike. Folding the
+    query alone would break Simplified text that keeps a foldable character (覆盖 -> 复盖).
+    """
     if not text:
         return ""
     decomposed = unicodedata.normalize("NFKD", text)
     stripped = "".join(ch for ch in decomposed if unicodedata.category(ch) != "Mn")
-    return stripped.translate(_FOLD_CHAR_MAP).lower()
+    return stripped.translate(_FOLD_CHAR_MAP).lower().translate(_HAN_FOLD_ALL)
 
 
 def fold_han(text: str | None) -> str:

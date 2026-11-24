@@ -17,6 +17,7 @@ from typing import Any
 
 from ..errors import CrossGameHallucinationError
 from ..formatters import _parse_numeric_or_none
+from ..game_data import fold_han
 from ..guardrails import validate_engine_root
 from ..importers import share_code_to_xml
 from ..updater import resolve_engine_root
@@ -398,7 +399,8 @@ def _resolve_jewel_static(name: str, jewels: dict[str, Any]) -> str | None:
     for key in jewels:
         if key.lower() == q_low:
             return key
-    zh_mapped = _JEWEL_ZH_ALIASES.get(query)
+    # The names are Simplified, with a Traditional spelling for some: fold so the rest match too.
+    zh_mapped = _JEWEL_ZH_ALIASES.get(query) or _JEWEL_ZH_ALIASES.get(fold_han(query))
     if zh_mapped and zh_mapped in jewels:
         return zh_mapped
     return None

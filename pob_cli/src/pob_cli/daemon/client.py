@@ -23,6 +23,7 @@ from .runtime import (
     _daemon_lock_file,
     _daemon_state_file,
     _get_runtime_dir,
+    _is_offline_env,
     _is_pid_alive,
     _maybe_emit_degraded_alert,
 )
@@ -354,6 +355,11 @@ def call_daemon(
 ) -> dict[str, Any]:
     """Send an authenticated RPC to the local PoB daemon, starting it automatically if not running."""
     import pob_cli.daemon as _daemon_pkg
+
+    if action in ("status", "load") and _is_offline_env():
+        # A daemon reads POB_OFFLINE once, when it starts. One started without it would still run its
+        # periodic engine update check on these two actions, whatever `--offline` this command has.
+        params = {**(params or {}), "skip_periodic_check": True}
 
     rt_dir = _get_runtime_dir(runtime_dir)
     state_file = _daemon_state_file(rt_dir)

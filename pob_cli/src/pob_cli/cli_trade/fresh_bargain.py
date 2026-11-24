@@ -10,6 +10,10 @@ from ..trade_eval import listing_age_hours
 from ..trade_query import build_query
 from .common import _price_of
 
+# The trade site stops matching at this many listings and sorts only those, so the "cheapest"
+# page of a search that hits it is not the real floor.
+RESULT_CAP = 10000
+
 
 def _chaos_rates(client: Any, league: str, proxy: str | None) -> dict[str, float]:
     """Trade currency id -> chaos value (poe.ninja); only chaos itself when a source is unreachable."""
@@ -135,24 +139,29 @@ def _fetch_with_fresh_and_market(
     market: float | None = None
     market_note = ""
     if bargain is not None:
+        market_total = total
         if (max_age is None or stale_fallback) and search_sort == "asc" and want >= 10:
             cheapest = rows[:10]  # this search already is "cheapest first, any age"
         else:
             try:
-                cheapest = _search_rows(
+                market_total, cheapest = _search_rows(
                     client,
                     league_name,
                     build_query(**{**query_args, "search_sort": "asc"}),
                     want=10,
                     max_age=None,
-                )[2]
+                )[1:3]
             except TradeError:
                 cheapest = []
-        market = _market_chaos(cheapest, rates)
+        capped = market_total >= RESULT_CAP
+        market = None if capped else _market_chaos(cheapest, rates)
         market_note = (
             f"median of the {len(cheapest)} cheapest listings (any age) is {market:g} chaos; "
             f"BARGAIN = at least {bargain:g}% below that (price only - judge the item by the PoB columns)"
             if market
+            else f"no going price: the search matches {RESULT_CAP}+ listings, the site's cap, so its "
+            "cheapest page is not the real floor; narrow the search - nothing flagged"
+            if capped
             else "no going price (under 5 priced listings, or the market search failed); nothing flagged"
         )
 

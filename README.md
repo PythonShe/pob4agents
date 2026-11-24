@@ -166,7 +166,7 @@ pob update --proxy http://127.0.0.1:7890        # 更新引擎，并刷新已加
 | `POB_CACHE_DIR` | 指定本地游戏数据库及联网查询的缓存目录 |
 | `POB_SLOT` | 默认目标构筑槽位名（未传 `--target` 时生效，默认为 `main`） |
 | `POB_PROXY` | 网络请求代理（支持 `http://`、`https://`、`socks5://`；亦兼容 `HTTPS_PROXY` / `ALL_PROXY`） |
-| `POB_GITHUB_MIRROR` | GitHub 下载镜像前缀（加速 `bootstrap` / `update`） |
+| `POB_GITHUB_MIRROR` | GitHub 下载镜像前缀（加速 `bootstrap` / `update`）。日常的版本检查走镜像；真要替换文件时，哈希清单优先直连 GitHub 读取，连不上才用镜像给的那份，此时引擎文件的可信度等同于该镜像 |
 | `POB_OFFLINE` | 设为 `1` 时跳过启动期与定时 GitHub 更新检查（等价于全局 `--offline`） |
 | `POB_HOOK_DISABLE_V5` | 设为 `1` 时关闭 `verify-stop` 的 V5 联网机制核验闸门（独立于 `POB_OFFLINE`） |
 | `POESESSID` / `POE_COOKIE` | 官方交易接口返回 401/403 时可按需设置；请只通过环境变量提供，不要写进命令参数或日志 |
@@ -285,6 +285,7 @@ pob tree --type Mastery --allocated --masteries
 pob tree --socket-radius 61419
 
 # 查看 PoB「计算」页中的数值和来源；可同时查多个关键词
+# 「计算」页有自己选中的技能：输出会标明是哪个技能，与主技能不同时给出警告
 pob calc "Average Hit" "Spell Suppression" "Mana Regen"
 ```
 

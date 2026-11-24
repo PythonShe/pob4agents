@@ -6,6 +6,7 @@ import contextlib
 import hashlib
 import json
 import os
+import re
 import threading
 import time
 from collections.abc import Iterator, Sequence
@@ -22,6 +23,9 @@ MAX_RECEIPT_BYTES = 256 * 1024
 _EXCLUDED_TOP_COMMANDS = frozenset({"hook", "serve", "_daemon"})
 _HELP_VERSION_FLAGS = frozenset({"--help", "-h", "--version"})
 _GLOBAL_VALUE_FLAGS = frozenset({"--target", "--runtime-dir", "--pob-root", "--cache-dir", "--proxy"})
+# The `user:password@` part of a URL inside one argument: everything up to the last `@` of the
+# authority, so an e-mail user name or a space in the password is covered too.
+_URL_USERINFO_RE = re.compile(r"(://)[^/?#]*@")
 
 _COMPUTE_SINGLE_CMDS = frozenset(
     {
@@ -119,9 +123,18 @@ def _extract_command_tokens(args: Sequence[str]) -> list[str]:
     return positionals
 
 
+def _receipt_slot(raw: str) -> str | None:
+    """Canonical slot for a receipt. Folded first, so `頭盔` records as Helmet just like `头盔`."""
+    from .game_data import fold_han
+
+    return normalize_equipment_slot(fold_han(raw))
+
+
 def classify_cli_args(raw_args: Sequence[str]) -> dict[str, Any]:
     """Classify CLI argv into receipt metadata without side effects."""
-    args = [str(a) for a in raw_args if a is not None]
+    # The ledger is a plain file: a proxy or mirror URL can carry a password (http://user:pass@host).
+    # Masked here, before anything is derived, so no receipt field can carry one.
+    args = [_URL_USERINFO_RE.sub(r"\g<1>***@", str(a)) for a in raw_args if a is not None]
     cmd_str = " ".join(args)[:240]
 
     if not args or any(tok in _HELP_VERSION_FLAGS for tok in args):
@@ -182,13 +195,13 @@ def classify_cli_args(raw_args: Sequence[str]) -> dict[str, Any]:
     inspected_slots: list[str] = []
     if subcommand in ("item inspect", "items"):
         if eq_slot_raw and eq_slot_raw.strip():
-            norm_eq = normalize_equipment_slot(eq_slot_raw)
+            norm_eq = _receipt_slot(eq_slot_raw)
             if norm_eq:
                 inspected_slots.append(norm_eq)
         elif subcommand == "items" and _has_flag(args, "--all"):
             inspected_slots.append("*")
     elif subcommand == "trade search" and _has_flag(args, "--bench-craft") and eq_slot_raw and eq_slot_raw.strip():
-        norm_eq = normalize_equipment_slot(eq_slot_raw)
+        norm_eq = _receipt_slot(eq_slot_raw)
         if norm_eq:
             inspected_slots.append(norm_eq)
 
@@ -242,7 +255,7 @@ def record_daemon_receipt_hint(
                     frame["inspectedSlots"].append("*")
             p_slot = params.get("slot")
             if isinstance(p_slot, str) and p_slot.strip():
-                norm_eq = normalize_equipment_slot(p_slot)
+                norm_eq = _receipt_slot(p_slot)
                 if norm_eq and norm_eq not in frame["inspectedSlots"]:
                     frame["inspectedSlots"].append(norm_eq)
 
