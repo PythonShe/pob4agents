@@ -32,7 +32,6 @@ from pob_cli.updater.remote import (
     POBTOOLS_APP_ONLY_PREFIXES,
     POBTOOLS_DATA_ONLY_PREFIXES,
     _extract_zip_safely,
-    ensure_timeless_lut_files,
     ensure_tree_data_files,
 )
 from pob_cli.updater.win_lua_host import main as win_lua_host_main
@@ -415,7 +414,7 @@ def test_windows_build_engine_command_native_and_legacy_fallback(
     assert env_leg == {}
 
 
-def test_ondemand_tree_and_timeless_fetch_helpers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ensure_tree_data_files_fetches_by_manifest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     payloads = _rich_payloads()
     xml_text = _sample_rich_manifest(payloads)
     poe1 = tmp_path / "PoE1"
@@ -443,9 +442,6 @@ def test_ondemand_tree_and_timeless_fetch_helpers(tmp_path: Path, monkeypatch: p
     fetched_urls.clear()
     ensure_tree_data_files(poe1, "3_28")
     assert fetched_urls == []
-
-    lut_paths = ensure_timeless_lut_files(poe1, "GloriousVanity")
-    assert {p.name for p in lut_paths} == {"GloriousVanity.zip.part0", "GloriousVanity.zip.part1"}
 
     with pytest.raises(UpdateError, match="Invalid tree_version"):
         ensure_tree_data_files(poe1, "../evil")
@@ -479,9 +475,6 @@ def test_real_win_lua_host_win32_ffi_and_lazy_hooks(tmp_path: Path, monkeypatch:
 
     sandbox = tmp_path / "sandbox"
     sandbox.mkdir()
-    ondemand = tmp_path / "ondemand"
-    (ondemand / "TreeData" / "3_29").mkdir(parents=True)
-    (ondemand / "TreeData" / "3_29" / "tree.lua").write_text("return { ok = 'from_ondemand' }\n", encoding="utf-8")
 
     # Minimal synthetic game modules inside tmp_path to exercise lazy_hooks cleanly
     fake_game = tmp_path / "game"
@@ -549,7 +542,7 @@ assert(RemoveDir(sub, true) == true)
 local gdir = {json.dumps(fake_game.as_posix(), ensure_ascii=False)}
 plat.chdir(gdir)
 package.path = gdir .. "/?.lua;" .. package.path
-lazy.install_pre_launch(gdir, {{ ondemand_tree_dir = {json.dumps(ondemand.as_posix(), ensure_ascii=False)} }})
+lazy.install_pre_launch(gdir, {{}})
 
 local flav = LoadModule("Data/FlavourText")
 assert(type(flav) == "table" and next(flav) == nil)
@@ -586,31 +579,9 @@ assert(lazy.stats.hook_item_dbs_skipped == 1)
 assert(lazy.ensure_item_dbs() == true)
 assert(main.uniqueDB.drained == true)
 
-local tree29 = LoadModule("TreeData/3_29/tree")
-assert(tree29.ok == "from_ondemand")
-assert(lazy.stats.tree_fallback_hits >= 1)
-
--- Verify __POB_ENSURE_TREE FFI callback runs cleanly from Lua without crashing
-assert(type(_G.__POB_ENSURE_TREE) == "function")
-assert(_G.__POB_ENSURE_TREE("3_30") == false)
-assert(_G.__POB_ENSURE_TREE("") == false)
-
--- Verify io.open on missing TreeData/*.png does NOT trigger tree fallback or __POB_ENSURE_TREE
-local cb_calls = 0
-local orig_ensure = _G.__POB_ENSURE_TREE
-_G.__POB_ENSURE_TREE = function(v)
-    cb_calls = cb_calls + 1
-    return orig_ensure(v)
-end
-local missing_img = io.open("TreeData/3_30/AscendancyButton.png", "r")
-assert(missing_img == nil)
-assert(cb_calls == 0)
-
--- While missing TreeData/*.lua DOES invoke __POB_ENSURE_TREE (once per version)
-local missing_tree = io.open("TreeData/3_99/tree.lua", "r")
-assert(missing_tree == nil)
-assert(cb_calls == 1)
-_G.__POB_ENSURE_TREE = orig_ensure
+-- No TreeData fallback: a missing tree is staged by Python before import_code, not here
+assert(io.open("TreeData/3_99/tree.lua", "r") == nil)
+assert(_G.__POB_ENSURE_TREE == nil)
 
 local out = assert(io.open({json.dumps(out_json.as_posix(), ensure_ascii=False)}, "wb"))
 out:write("OK")

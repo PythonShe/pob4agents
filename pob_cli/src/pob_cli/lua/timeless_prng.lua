@@ -553,14 +553,10 @@ function M.install_post_launch(meta_gz_path, opts)
 	local mmap = opts.mmap or load_sibling_mmap()
 	MMAP_MOD = mmap
 	if mmap and mmap.configure then mmap.configure(opts) end
-	local fast_lut = (opts.fast_lut == true) or (opts.force_mmap == true) or (os.getenv("POB_FAST_LUT") == "1")
 	local orig_l = opts.fallback_readLUT or (data and data.readLUT)
 	local orig_a = opts.fallback_readAbyss or (data and data.readAbyssJewelLUT)
 	if data then
 		data.readLUT = function(seed, nodeID, jt)
-			if fast_lut and mmap and mmap.readLUT(seed, nodeID, jt, true) then
-				local r = mmap.readLUT(seed, nodeID, jt, false); if r ~= nil then return r end
-			end
 			if can_use_prng(jt) then return M.readLUT(seed, nodeID, jt) end
 			if mmap and mmap.readLUT(seed, nodeID, jt, true) then
 				local r = mmap.readLUT(seed, nodeID, jt, false); if r ~= nil then return r end
@@ -568,9 +564,6 @@ function M.install_post_launch(meta_gz_path, opts)
 			return orig_l and orig_l(seed, nodeID, jt) or {}
 		end
 		data.readAbyssJewelLUT = function(seed, sid, jt, path, asc)
-			if fast_lut and mmap and mmap.readAbyssJewelLUT(seed, sid, jt, path, asc, true) then
-				local r = mmap.readAbyssJewelLUT(seed, sid, jt, path, asc, false); if r ~= nil then return r end
-			end
 			if can_use_prng(jt) then return M.readAbyssJewelLUT(seed, sid, jt, path, asc) end
 			if mmap and mmap.readAbyssJewelLUT(seed, sid, jt, path, asc, true) then
 				local r = mmap.readAbyssJewelLUT(seed, sid, jt, path, asc, false); if r ~= nil then return r end

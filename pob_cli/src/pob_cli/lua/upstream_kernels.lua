@@ -1,6 +1,6 @@
 -- Zero-intrusion upstream PoB kernel RPCs:
---   - M.install_post_bridge(): upgrades node_power to skip redundant FullDPS pass when stat ~= "FullDPS"
---   - M.rpc_handlers.node_power: fast PowerBuilder + BuildPowerReportList (includes Cluster notables)
+--   - M.rpc_handlers.node_power: fast PowerBuilder + BuildPowerReportList (includes Cluster notables),
+--     skipping the redundant FullDPS pass when stat ~= "FullDPS"
 --   - M.rpc_handlers.power_diff_attribution: CompareTab:ComparePowerBuilder attribution (non-compare_* RPC)
 --   - M.rpc_handlers.trade_generate_query: synchronous TradeQueryGenerator coroutine driver
 
@@ -9,7 +9,6 @@ local H = require("pob_host")
 local json_obj, now_ms, get_build = H.json_obj, H.now_ms, H.get_build
 
 local M = {
-	_installed = false,
 	_cached_tqg = nil,
 	_stat_info = nil,
 }
@@ -93,18 +92,6 @@ local function wrap_calcs_power_builder(calcs_tab)
 	end
 	host._pob4agents_pb_wrapped = true
 	calcs_tab._pob4agents_pb_wrapped = true
-end
-
-function M.install_post_bridge()
-	if M._installed then
-		return true
-	end
-	local b = get_build({ rebuild = false, optional = true })
-	if b then
-		wrap_calcs_power_builder(b.calcsTab)
-	end
-	M._installed = true
-	return true
 end
 
 local function handle_node_power(params)

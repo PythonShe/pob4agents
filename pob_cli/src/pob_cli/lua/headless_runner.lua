@@ -344,7 +344,7 @@ local lazy_hooks_mod = nil
 do
 	local lh = load_ext("lazy_hooks.lua")
 	if type(lh) == "table" and type(lh.install_pre_launch) == "function" then
-		local ok, res = pcall(lh.install_pre_launch, GAME_DIR, { engine_root = engine_root })
+		local ok, res = pcall(lh.install_pre_launch, GAME_DIR)
 		if ok and res ~= false then lazy_hooks_mod = lh; CAPS.lazyHooks = true
 		elseif not ok then log_stderr("[lazy_hooks] " .. tostring(res)) end
 	end
@@ -365,7 +365,7 @@ do
 	local t_prng = load_ext("timeless_prng.lua")
 	if type(t_prng) == "table" and type(t_prng.install_post_launch) == "function" then
 		local ok, res = pcall(t_prng.install_post_launch, meta_gz, {
-			game_dir = GAME_DIR, runner_dir = RUNNER_DIR, fast_lut = (os.getenv("POB_FAST_LUT") == "1"),
+			game_dir = GAME_DIR, runner_dir = RUNNER_DIR,
 		})
 		if ok and res ~= false then CAPS.timelessPrng = true; register_handlers(t_prng.rpc_handlers)
 		elseif not ok then log_stderr("[timeless_prng] " .. tostring(res)) end
@@ -403,10 +403,6 @@ do
 
 	local uk = load_ext("upstream_kernels.lua")
 	if type(uk) == "table" then
-		if type(uk.install_post_bridge) == "function" then
-			local ok, res = pcall(uk.install_post_bridge, bridge_dispatcher)
-			if ok and type(res) == "function" then bridge_dispatcher = res elseif not ok then log_stderr("[upstream_kernels] " .. tostring(res)) end
-		end
 		if type(uk.rpc_handlers) == "table" then
 			register_handlers(uk.rpc_handlers)
 			if uk.rpc_handlers.power_diff_attribution then CAPS.powerAttribution = true end

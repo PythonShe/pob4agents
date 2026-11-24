@@ -1,25 +1,15 @@
 -- Zero-intrusion pre-launch lazy loading hooks for Path of Building.
--- Wraps LoadModule / PLoadModule / io.open before Launch.lua without editing upstream PoB:
+-- Wraps LoadModule / PLoadModule before Launch.lua without editing upstream PoB:
 --   1. Pearl of Tsoatha fast-path avoiding 258k-line stat_descriptions.lua at boot.
 --   2. Data/FlavourText -> {} skip.
 --   3. Defer Main.lua LoadItems uniqueDB/rareDB/visceraDB coroutine (drainable on demand via ensure_item_dbs).
---   4. Optional .ljbc bytecode loader + on-demand TreeData fallback resolver.
+-- Missing TreeData is not resolved here: the Python side stages a build's tree versions before
+-- import_code (bridge_protocol.stage_missing_tree_versions).
 -- Data/Crucible and Data/ModScourge load eagerly: PoB walks both with pairs() (Data.lua builds
 -- itemMods.Item from Scourge, ItemsTab lists data.crucible), LuaJIT 5.1 has no __pairs, so a lazy
 -- proxy looked empty, and together they cost about 10 ms.
 
 local M = {}
-
-local function strip_trailing_slash(p)
-	if not p or p == "" then
-		return "."
-	end
-	local s = p:gsub("\\", "/")
-	if s:match("^%a:/$") or s == "/" then
-		return s
-	end
-	return (s:gsub("/+$", ""))
-end
 
 local function is_abs_path(p)
 	return p:sub(1, 1) == "/" or p:match("^%a:/") ~= nil
@@ -34,13 +24,11 @@ end
 
 M.stats = {
 	loaded_modules = 0,
-	bytecode_loads = 0,
 	hook_flavour_skipped = 0,
 	hook_pearl_fastpath_calls = 0,
 	hook_stat_desc_real_loads = 0,
 	hook_item_dbs_skipped = 0,
 	hook_item_dbs_drained = 0,
-	tree_fallback_hits = 0,
 }
 
 M._saved_load_items = nil
@@ -70,6 +58,7 @@ function M.get_stats()
 	return M.stats
 end
 
+-- game_dir: the PoE1 directory, already normalized by the host (forward slashes, no trailing slash).
 function M.install_pre_launch(game_dir, opts)
 	if M._installed then
 		return M
@@ -80,20 +69,11 @@ function M.install_pre_launch(game_dir, opts)
 	local skip_flavour = (not disable_all) and opt_enabled(opts, "skip_flavour_text", true)
 	local lazy_stat_desc = (not disable_all) and opt_enabled(opts, "lazy_stat_descriptions", true)
 	local skip_item_dbs = (not disable_all) and opt_enabled(opts, "skip_item_dbs", true)
-	local bytecode_mode = opt_enabled(opts, "bytecode_mode", os.getenv("POB_BYTECODE_MODE") == "1")
 
-	local gdir = strip_trailing_slash(tostring(game_dir or "."))
-	local ondemand_dir = opts.ondemand_tree_dir or os.getenv("POB_ONDEMAND_TREE_DIR")
-	if type(ondemand_dir) == "string" and ondemand_dir ~= "" then
-		ondemand_dir = strip_trailing_slash(ondemand_dir)
-	else
-		ondemand_dir = nil
-	end
-	local tree_fallback_fn = type(opts.tree_fallback_fn) == "function" and opts.tree_fallback_fn or nil
+	local gdir = tostring(game_dir or ".")
 
-	local raw_io_open = io.open
 	local function file_exists(p)
-		local f = raw_io_open(p, "rb")
+		local f = io.open(p, "rb")
 		if f then
 			f:close()
 			return true
@@ -101,153 +81,13 @@ function M.install_pre_launch(game_dir, opts)
 		return false
 	end
 
-	local function wall_seconds()
-		if type(GetTime) == "function" then
-			local ok, ms = pcall(GetTime)
-			if ok and type(ms) == "number" then return ms / 1000 end
-		end
-		return os.time()
-	end
-
-	local attempted_trees, in_flight = {}, {}
-	local function is_tree_data_script(rel)
-		local low = rel:lower()
-		return low:match("^treedata/") ~= nil
-			and (low:match("%.lua$") ~= nil or low:match("%.json$") ~= nil)
-	end
-
-	local function resolve_tree_fallback(rel)
-		if not is_tree_data_script(rel) then
-			return nil
-		end
-		-- 1. Already staged in on-demand tree directory
-		if ondemand_dir then
-			local od = ondemand_dir .. "/" .. rel
-			if file_exists(od) then
-				M.stats.tree_fallback_hits = M.stats.tree_fallback_hits + 1
-				return od
-			end
-		end
-		local tree_ver = rel:match("^TreeData/([%w_%-]+)/")
-		if not tree_ver then
-			return nil
-		end
-		-- 2. Custom callback passed via opts.tree_fallback_fn
-		if tree_fallback_fn then
-			local ok, resolved = pcall(tree_fallback_fn, rel, tree_ver, gdir)
-			if ok and type(resolved) == "string" and file_exists(resolved) then
-				M.stats.tree_fallback_hits = M.stats.tree_fallback_hits + 1
-				return resolved
-			end
-		end
-		-- 3. Native host Python callback (_G.__POB_ENSURE_TREE) with 5s retry backoff on failure.
-		-- Wall time: os.clock() is CPU time, which barely moves while the host waits on the network.
-		local now = wall_seconds()
-		local last_ts = attempted_trees[tree_ver]
-		if not in_flight[tree_ver] and (not last_ts or (now - last_ts) >= 5.0) and type(_G.__POB_ENSURE_TREE) == "function" then
-			in_flight[tree_ver], attempted_trees[tree_ver] = true, now
-			pcall(_G.__POB_ENSURE_TREE, tree_ver)
-			in_flight[tree_ver] = nil
-			if file_exists(rel) then
-				M.stats.tree_fallback_hits = M.stats.tree_fallback_hits + 1
-				return rel
-			end
-			local full = gdir .. "/" .. rel
-			if file_exists(full) then
-				M.stats.tree_fallback_hits = M.stats.tree_fallback_hits + 1
-				return full
-			end
-		end
-		return nil
-	end
-
 	local function resolve_module_path(norm)
-		local is_abs = is_abs_path(norm)
-		if bytecode_mode then
-			local bc_rel = norm .. ".ljbc"
-			if file_exists(bc_rel) then
-				M.stats.bytecode_loads = M.stats.bytecode_loads + 1
-				return bc_rel
-			end
-			if not is_abs then
-				local bc_full = gdir .. "/" .. bc_rel
-				if file_exists(bc_full) then
-					M.stats.bytecode_loads = M.stats.bytecode_loads + 1
-					return bc_full
-				end
-			end
-		end
-
 		local lua_rel = norm .. ".lua"
-		if file_exists(lua_rel) then
+		if file_exists(lua_rel) or is_abs_path(norm) then
 			return lua_rel
 		end
-		if not is_abs then
-			local lua_full = gdir .. "/" .. lua_rel
-			if file_exists(lua_full) then
-				return lua_full
-			end
-			local fb = resolve_tree_fallback(lua_rel)
-			if fb then
-				return fb
-			end
-		end
-		return lua_rel
-	end
-
-	-- Intercept read-mode io.open for TreeData fallback and optional .ljbc files
-	io.open = function(path, mode)
-		local m = mode or "r"
-		if type(path) == "string" and not m:find("[wa+]") then
-			local norm = path:gsub("\\", "/")
-			local rel = norm
-			local prefix = gdir .. "/"
-			if norm:sub(1, #prefix) == prefix then
-				rel = norm:sub(#prefix + 1)
-			end
-			if is_tree_data_script(rel) and not file_exists(path) then
-				local fb = resolve_tree_fallback(rel)
-				if fb then
-					return raw_io_open(fb, m)
-				end
-			end
-			if bytecode_mode and rel:match("%.lua$") and not file_exists(path) then
-				local bc_rel = rel:gsub("%.lua$", ".ljbc")
-				if file_exists(bc_rel) then
-					return raw_io_open(bc_rel, "rb")
-				end
-				local bc_full = gdir .. "/" .. bc_rel
-				if file_exists(bc_full) then
-					return raw_io_open(bc_full, "rb")
-				end
-			end
-		end
-		return raw_io_open(path, mode)
-	end
-
-	-- Optional .ljbc package loader for require()
-	if bytecode_mode and type(package.loaders) == "table" then
-		table.insert(package.loaders, 2, function(modname)
-			local rel = tostring(modname):gsub("%.", "/")
-			local cands = {
-				"lua/" .. rel .. ".ljbc",
-				"lua/" .. rel .. "/init.ljbc",
-				rel .. ".ljbc",
-				rel .. "/init.ljbc",
-				gdir .. "/lua/" .. rel .. ".ljbc",
-				gdir .. "/" .. rel .. ".ljbc",
-			}
-			for _, p in ipairs(cands) do
-				if file_exists(p) then
-					local fn, err = loadfile(p)
-					if fn then
-						M.stats.bytecode_loads = M.stats.bytecode_loads + 1
-						return fn
-					end
-					return "\n\tbytecode load error: " .. tostring(err)
-				end
-			end
-		end)
+		local lua_full = gdir .. "/" .. lua_rel
+		return file_exists(lua_full) and lua_full or lua_rel
 	end
 
 	local function raw_load_module(name, ...)
@@ -369,7 +209,6 @@ function M.install_pre_launch(game_dir, opts)
 		return ret[2]
 	end
 
-	_G.__POB_LAZY_STATS = M.stats
 	M._installed = true
 	return M
 end

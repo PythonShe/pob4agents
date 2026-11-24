@@ -578,25 +578,3 @@ def ensure_tree_data_files(
     if out:
         inc_marker.unlink(missing_ok=True)
     return out
-
-
-def ensure_timeless_lut_files(
-    poe1_dir: Path,
-    stem: str,
-    *,
-    dest_dir: Path | None = None,
-    proxy: str | None = None,
-    mirror: str | None = None,
-) -> list[Path]:
-    """Ensure `Data/TimelessJewelData/<stem>.zip*` exist on demand for fallback mmap lookups."""
-    clean = stem.strip()
-    if not clean or not _SAFE_TREE_VER_RE.match(clean):
-        raise UpdateError(f"Invalid timeless LUT stem: {stem!r}")
-    exact = f"data/timelessjeweldata/{clean.lower()}.zip"
-    part_prefix = f"{exact}.part"
-
-    def _want(entry: ManifestFileEntry) -> bool:
-        low = entry.local_rel.replace("\\", "/").lower()
-        return low == exact or low.startswith(part_prefix)
-
-    return fetch_pob_manifest_subset(poe1_dir, _want, dest_dir=dest_dir, proxy=proxy, mirror=mirror)

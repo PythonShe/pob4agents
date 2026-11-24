@@ -267,7 +267,6 @@ def test_lua_modules_contract_budgets_and_no_compare_prefix() -> None:
         assert not re.search(r"[A-Za-z]:[/\\]|/(?:Users|home)/", text), f"Local path leaked in {path.name}"
 
     uk_text = uk_path.read_text(encoding="utf-8")
-    assert "function M.install_post_bridge" in uk_text
     assert "node_power = handle_node_power" in uk_text
     assert "power_diff_attribution = handle_power_diff_attribution" in uk_text
     assert "trade_generate_query = handle_trade_generate_query" in uk_text

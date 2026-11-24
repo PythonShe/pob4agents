@@ -17,7 +17,6 @@ from typing import Any
 
 LUA_GLOBALSINDEX = -10002
 LUA_TSTRING = 4
-TREE_FETCH_CB = ctypes.CFUNCTYPE(c_int, c_char_p)
 
 
 class LuaHostError(RuntimeError):
@@ -96,63 +95,13 @@ def _load_lua51_dll(game_dir: Path, dll_path: Path | None = None) -> tuple[ctype
     return configured, dll_dir_handle
 
 
-def _make_ensure_tree_callback(game_dir: Path) -> Any:
-    """Create a plain C ABI callback `int(const char *tree_version)` for LuaJIT FFI."""
-    resolved_game_dir = Path(game_dir).resolve()
-
-    @TREE_FETCH_CB
-    def _cb(ver_raw: bytes | None) -> int:
-        if not ver_raw or os.environ.get("POB_OFFLINE") == "1":
-            return 0
-        tree_ver = ver_raw.decode("utf-8", errors="replace").strip()
-        if not tree_ver:
-            return 0
-        try:
-            from .remote import ensure_tree_data_files
-
-            fetched = ensure_tree_data_files(resolved_game_dir, tree_ver, timeout=8.0)
-            return 1 if fetched else 0
-        except Exception:
-            return 0
-
-    return _cb
-
-
-def _install_ffi_ensure_tree(dll: ctypes.CDLL, state: c_void_p, ensure_tree_cb: Any) -> None:
-    """Bind `_G.__POB_ENSURE_TREE(ver)` via LuaJIT FFI (avoids re-entering lua51.dll from ctypes)."""
-    addr = ctypes.cast(ensure_tree_cb, c_void_p).value or 0
-    if not addr:
-        return
-    hi = (addr >> 32) & 0xFFFFFFFF
-    lo = addr & 0xFFFFFFFF
-    bootstrap = (
-        "do\n"
-        '  local ok, ffi = pcall(require, "ffi")\n'
-        "  if ok and ffi then\n"
-        f'    local ptr = ffi.cast("uintptr_t", {hi}) * 4294967296ULL + ffi.cast("uintptr_t", {lo})\n'
-        '    local cb = ffi.cast("int (*)(const char *)", ptr)\n'
-        "    _G.__POB_ENSURE_TREE = function(ver)\n"
-        '      if type(ver) ~= "string" or ver == "" then return false end\n'
-        "      return cb(ver) ~= 0\n"
-        "    end\n"
-        "  end\n"
-        "end\n"
-    ).encode()
-    if dll.luaL_loadbuffer(state, bootstrap, len(bootstrap), b"=@win_lua_host_ffi_cb") == 0:
-        if dll.lua_pcall(state, 0, 0, 0) != 0:
-            dll.lua_settop(state, -2)
-    else:
-        dll.lua_settop(state, -2)
-
-
 def _populate_lua_globals(
     dll: ctypes.CDLL,
     state: c_void_p,
     runner_lua: Path,
     script_args: Sequence[str],
-    ensure_tree_cb: Any,
 ) -> None:
-    """Set Lua `arg`, host markers, and on-demand tree fallback callback before running script."""
+    """Set Lua `arg` and the host markers before running the script."""
     dll.lua_createtable(state, len(script_args), 1)
     _push_utf8(dll, state, str(runner_lua))
     dll.lua_rawseti(state, -2, 0)
@@ -166,8 +115,6 @@ def _populate_lua_globals(
 
     _push_utf8(dll, state, runner_lua.resolve().parent.as_posix())
     dll.lua_setfield(state, LUA_GLOBALSINDEX, b"__POB_LUA_DIR")
-
-    _install_ffi_ensure_tree(dll, state, ensure_tree_cb)
 
 
 def _push_traceback_handler(dll: ctypes.CDLL, state: c_void_p) -> int:
@@ -208,11 +155,9 @@ def run_lua_script(
             dll_dir_handle.close()
         raise LuaHostError("luaL_newstate() returned NULL")
 
-    # Keep callback reference alive for the full lua_State lifetime
-    ensure_tree_cb = _make_ensure_tree_callback(game_dir_resolved)
     try:
         dll.luaL_openlibs(state)
-        _populate_lua_globals(dll, state, runner_resolved, norm_args, ensure_tree_cb)
+        _populate_lua_globals(dll, state, runner_resolved, norm_args)
 
         sys.stdout.flush()
         sys.stderr.flush()
