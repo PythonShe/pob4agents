@@ -77,3 +77,15 @@ def test_import_character_json_lands_in_the_build(worker: BridgeWorker) -> None:
     assert len(items["items"]) == 1
     assert worker.call("get_stats", {})["stats"]["Life"] > 0
 
+
+def test_agent_probe_build_reads_conditions_with_var_lists(worker: BridgeWorker) -> None:
+    # Mods conditioned on `varList` crashed the probe in ModStore:GetCondition.
+    if not worker.caps.get("agentProbes"):
+        pytest.skip("host has no agent probes")
+    _load_example(worker)
+    res = worker.call("agent_probe_build", {})
+    assert res["slotsInspected"] > 0
+    assert set(res["resistSlack"]) == {"Fire", "Cold", "Lightning", "Chaos"}
+    gen = worker.call("trade_generate_query", {"slotName": "Ring 1"}, timeout=120.0)
+    assert gen["slotConstraints"]["slot"] == "Ring 1"
+

@@ -56,19 +56,11 @@ local function sum_item_attr_res(item, slot_num, mod_db)
 	if not src_list then return base_attr, inc_attr, base_res, base_res_max end
 
 	for _, mod in ipairs(src_list) do
-		local val = mod.value
-		if type(val) == "number" and (mod.flags or 0) == 0 and (mod.keywordFlags or 0) == 0 then
-			local cond_ok = true
-			for _, tag in ipairs(mod) do
-				if tag.type == "Condition" then
-					local active = mod_db:GetCondition(tag.var)
-					if tag.neg then active = not active end
-					if not active then cond_ok = false; break end
-				elseif tag.type == "Multiplier" or tag.type == "PerStat" or tag.type == "SlotName" then
-					cond_ok = false; break
-				end
-			end
-			if cond_ok then
+		if type(mod.value) == "number" and (mod.flags or 0) == 0 and (mod.keywordFlags or 0) == 0 then
+			-- PoB's own tag evaluation, as its Sum applies it to the totals this is subtracted from
+			-- (conditions on `var` or `varList`, multipliers, per-stat); nil when a tag does not hold.
+			local val = mod_db:EvalMod(mod)
+			if type(val) == "number" then
 				local n, t = mod.name, mod.type
 				if t == "BASE" then
 					if base_attr[n] ~= nil then
