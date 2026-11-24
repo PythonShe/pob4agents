@@ -134,6 +134,8 @@ Queries and slang are mostly Simplified, the display may be either script, and t
 
 `DaemonRequestError` / `ValueError` (`errorKind: "request"`) exit `1`; a daemon, engine or transport fault (`errorKind: "daemon"`) exits `5` with a clean `Error: ...` and no traceback; trade follows `R13`.
 
+An engine error is split by `bridge_protocol.py`. A timeout, crash or failed write is a `BridgeError` fault. An RPC the engine answered with `{"error": {"code", "message"}}` raises `BridgeRejectedError` (the engine keeps running), carrying the Lua `code` (`engineCode` in the daemon reply) and the `errorKind` that `ENGINE_ERROR_KINDS`, the one mapping table, gives it: `bad_request`, and the share-code checks of bridge.lua's `decode_share_code` under `lua_error` (`empty code`, `code too large`, `not a Path of Building code`, `code did not decode to a build`, `code is not a build file for this game`), are `request`: exit `1`, the first line of the message only, and a hint to fix the input instead of `pob stop`. Every other code (`lua_error`, which PoB bugs and missing data raise too, `bad_json`, `no_bridge`, or none from a legacy host) stays a fault and exits `5`. Treating more `lua_error` rejections as requests needs distinct codes from the engine rather than a longer list of messages.
+
 ### PoE1 only
 
 `guardrails/` blocks PoE2 input with exit `1` and `errorKind: "cross_game_hallucination"`, and redirects to the `pob` equivalent or the `pob2` CLI:

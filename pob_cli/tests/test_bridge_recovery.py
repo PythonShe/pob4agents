@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 
 import pob_cli.bridge_client as bc
-from pob_cli.bridge_client import BridgeError, BridgeTimeoutError, BridgeWorker
+from pob_cli.bridge_client import BridgeError, BridgeRejectedError, BridgeTimeoutError, BridgeWorker
 
 # A request the fake engine never answers, so the caller hits its RPC timeout.
 _Hang = Callable[[str, dict[str, Any]], bool]
@@ -21,8 +21,9 @@ _Hang = Callable[[str, dict[str, Any]], bool]
 class _Engine:
     """Fake engine processes sharing one request log; `hang` decides which requests never get an answer."""
 
-    def __init__(self, hang: _Hang, *, max_launches: int = 40) -> None:
+    def __init__(self, hang: _Hang, *, max_launches: int = 40, errors: dict[str, Any] | None = None) -> None:
         self.hang = hang
+        self.errors = errors or {}
         self.launches = 0
         self.max_launches = max_launches
         self.sent: list[tuple[int, str, Any]] = []
@@ -54,6 +55,9 @@ class _Proc:
             method, params = req["method"], req.get("params") or {}
             self.engine.sent.append((self.launch, method, params.get("code")))
             if self.engine.hang(method, params):
+                continue
+            if method in self.engine.errors:
+                self._q.put(json.dumps({"id": req["id"], "error": self.engine.errors[method]}) + "\n")
                 continue
             result = {"caps": {}, "pobVersion": "2.69.0"} if method == "version" else {}
             self._q.put(json.dumps({"id": req["id"], "ok": True, "result": result}) + "\n")
@@ -196,3 +200,52 @@ def test_generation_counts_every_launch(tmp_path: Path, monkeypatch: pytest.Monk
     w.start(restore_code="")
     assert w.generation == 2
     w.stop()
+
+
+def test_engine_rejection_keeps_the_worker_and_carries_the_lua_code(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    trace = "\nstack traceback:\n\t[C]: in function 'error'"
+    engine = _Engine(
+        lambda _m, _p: False,
+        errors={
+            "import_code": {"code": "lua_error", "message": "not a Path of Building code" + trace},
+            "get_calcs": {"code": "lua_error", "message": "bridge.lua:9: attempt to index a nil value" + trace},
+        },
+    )
+    w = _worker(tmp_path, monkeypatch, engine, slot="test")
+    w.start(restore_code="")
+    gen = w.generation
+
+    with pytest.raises(BridgeRejectedError) as bad_input:
+        w.call("import_code", {"code": "garbage", "mode": "replace"})
+    assert bad_input.value.kind == "request" and bad_input.value.code == "lua_error"
+    assert "stack traceback" not in str(bad_input.value)
+
+    with pytest.raises(BridgeRejectedError) as engine_bug:
+        w.call("get_calcs", {})
+    assert engine_bug.value.kind == "daemon" and "stack traceback" in str(engine_bug.value)
+
+    assert w.generation == gen and w.is_running and engine.launches == 1
+    w.stop()
+
+
+def test_real_engine_rejects_a_bad_share_code_as_a_request_error(tmp_path: Path) -> None:
+    from engine_paths import find_runnable_engine
+
+    eng = find_runnable_engine()
+    if eng is None:
+        pytest.skip("no runnable PoB engine (bootstrap one or set POB_ROOT)")
+    w = BridgeWorker(slot_name="test", pob_dir=eng, runtime_dir=tmp_path / "rt")
+    try:
+        w.start(restore_code="")
+        gen = w.generation
+        with pytest.raises(BridgeRejectedError) as caught:
+            w.call("import_code", {"code": "not-a-build-code", "mode": "replace"})
+        assert caught.value.kind == "request"
+        assert caught.value.code == "lua_error"
+        assert "not a Path of Building code" in str(caught.value)
+        assert w.is_running and w.generation == gen
+        assert w.call("get_build_info", {}) is not None
+    finally:
+        w.stop()

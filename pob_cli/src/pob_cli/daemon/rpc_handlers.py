@@ -145,7 +145,9 @@ def _h_load(m: DaemonManager, params: dict[str, Any], w: BridgeWorker) -> dict[s
                 "Do NOT assume the build code is corrupted, and NEVER manually parse Build.xml to compute stats (R5)."
             )
             if isinstance(exc, BridgeError):
-                raise BridgeError(f"{exc}{guidance}") from exc
+                # Same exception, so an engine rejection keeps its errorKind.
+                exc.args = (f"{exc}{guidance}",)
+                raise
             if isinstance(exc, (DaemonRequestError, ValueError)):
                 raise DaemonRequestError(f"{exc}{guidance}") from exc
             raise RuntimeError(f"{exc}{guidance}") from exc

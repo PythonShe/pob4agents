@@ -17,6 +17,7 @@ from .bridge_protocol import (
     FORBIDDEN_METHODS,
     MAX_UNDO_STEPS,
     BridgeError,
+    BridgeRejectedError,
     BridgeTimeoutError,
     apply_worker_locale,
     await_startup_handshake,
@@ -24,8 +25,8 @@ from .bridge_protocol import (
     collect_batch_responses,
     compact_source_label,
     decode_batch_responses,
-    format_rpc_error,
     read_slot_state,
+    rpc_rejection,
     stage_tree_versions_hint,
     stderr_drain_loop,
     stdout_reader_loop,
@@ -61,6 +62,7 @@ __all__ = [
     "MAX_UNDO_STEPS",
     "RUNTIME_DIR",
     "BridgeError",
+    "BridgeRejectedError",
     "BridgeTimeoutError",
     "BridgeWorker",
 ]
@@ -372,7 +374,7 @@ class BridgeWorker:
 
             self.last_used = time.time()
             if msg.get("ok") is False or ("error" in msg and msg["error"] is not None):
-                raise BridgeError(f"RPC '{method}' failed: {format_rpc_error(msg.get('error'))}")
+                raise rpc_rejection(method, msg.get("error"))
 
             result = msg.get("result")
             res_dict = result if isinstance(result, dict) else {"value": result}

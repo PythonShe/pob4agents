@@ -11,7 +11,8 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ..bridge_client import BridgeError
+from ..bridge_client import BridgeError, BridgeRejectedError
+from ..bridge_protocol import ENGINE_REJECTED_HINT
 from ..errors import CrossGameHallucinationError, DaemonRequestError, LegacyPatchTrapError
 from ..guardrails import redact_secrets
 from .runtime import (
@@ -113,15 +114,19 @@ def make_handler(manager: DaemonManager) -> type[BaseHTTPRequestHandler]:
                     },
                 )
             except BridgeError as exc:
-                self._send_json(
-                    400,
-                    {
-                        "ok": False,
-                        "error": redact_secrets(str(exc)),
-                        "type": "BridgeError",
-                        "errorKind": "daemon",
-                    },
-                )
+                # A healthy engine that refused bad input is a request error (exit 1); everything
+                # else, timeouts and crashes included, is a fault (exit 5). See ENGINE_ERROR_KINDS.
+                kind = exc.kind if isinstance(exc, BridgeRejectedError) else "daemon"
+                message = redact_secrets(str(exc))
+                payload: dict[str, Any] = {
+                    "ok": False,
+                    "error": f"{message}\n{ENGINE_REJECTED_HINT}" if kind == "request" else message,
+                    "type": type(exc).__name__,
+                    "errorKind": kind,
+                }
+                if isinstance(exc, BridgeRejectedError) and exc.code:
+                    payload["engineCode"] = exc.code
+                self._send_json(400, payload)
             except Exception as exc:
                 self._send_json(
                     400,

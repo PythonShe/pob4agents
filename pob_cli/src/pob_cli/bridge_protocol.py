@@ -56,6 +56,36 @@ class BridgeTimeoutError(BridgeError):
     """Raised when an RPC call exceeds its deadline and the worker is recycled."""
 
 
+class BridgeRejectedError(BridgeError):
+    """The engine answered the RPC with an error: the process is healthy and refused only this call.
+
+    `kind` is the daemon's `errorKind` from `ENGINE_ERROR_KINDS`: "request" (exit 1) or "daemon" (exit 5).
+    """
+
+    def __init__(self, message: str, *, code: str | None = None, kind: str = "daemon") -> None:
+        super().__init__(message)
+        self.code = code
+        self.kind = kind
+
+
+# The one table from an engine error to the daemon's `errorKind`: (Lua `error.code`, start of the
+# message, "" for any, errorKind). Unlisted errors, timeouts and crashes are faults ("daemon", exit 5).
+# `lua_error` is also what a PoB bug or missing data raises, so of its messages only the share-code
+# checks in bridge.lua's `decode_share_code`, which fail on nothing but the code given, are listed.
+ENGINE_ERROR_KINDS: tuple[tuple[str, str, str], ...] = (
+    ("bad_request", "", "request"),
+    ("lua_error", "empty code", "request"),
+    ("lua_error", "code too large", "request"),
+    ("lua_error", "not a Path of Building code", "request"),
+    ("lua_error", "code did not decode to a build", "request"),
+    ("lua_error", "code is not a build file for this game", "request"),
+)
+ENGINE_REJECTED_HINT = (
+    "The engine is running and rejected this input: check the build code or arguments and retry "
+    "(no need to `pob stop`)."
+)
+
+
 def _decode_share_code_xml(code: str) -> str | None:
     """Best-effort decode of a PoB share code (or raw XML string) to XML text."""
     text = (code or "").strip()
@@ -239,6 +269,17 @@ def format_rpc_error(err_obj: Any) -> str:
     if isinstance(err_obj, dict):
         return err_obj.get("message") or json.dumps(err_obj, ensure_ascii=False)
     return str(err_obj or "unknown bridge error")
+
+
+def rpc_rejection(method: str, err_obj: Any) -> BridgeRejectedError:
+    """The exception for an RPC the engine answered with `err_obj`, classified by `ENGINE_ERROR_KINDS`."""
+    code = err_obj.get("code") if isinstance(err_obj, dict) else None
+    code = code if isinstance(code, str) else None
+    text = format_rpc_error(err_obj)
+    first = text.split("\n", 1)[0].strip()
+    kind = next((k for c, start, k in ENGINE_ERROR_KINDS if c == code and first.startswith(start)), "daemon")
+    # A rejected input needs no Lua stack trace; a fault keeps it for the bug report.
+    return BridgeRejectedError(f"RPC '{method}' failed: {first if kind == 'request' else text}", code=code, kind=kind)
 
 
 def compact_source_label(label: Any) -> str | None:
