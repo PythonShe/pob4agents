@@ -50,20 +50,22 @@ class _Client:
         return self.routes.get(url, _Resp(404))
 
 
-def _runtime_tar() -> bytes:
+def _runtime_tar(stamp: str | None = None) -> bytes:
     buf = io.BytesIO()
+    files = {"bin/luajit": b"#!/bin/sh\nexit 0\n", "bin/lua-utf8.so": b"#!/bin/sh\nexit 0\n"}
+    if stamp is not None:
+        files["bin/runtime.stamp"] = stamp.encode() + b"\n"
     with tarfile.open(fileobj=buf, mode="w:gz") as tf:
-        for name in ("bin/luajit", "bin/lua-utf8.so"):
-            data = b"#!/bin/sh\nexit 0\n"
+        for name, data in files.items():
             info = tarfile.TarInfo(name)
             info.size, info.mode = len(data), 0o755
             tf.addfile(info, io.BytesIO(data))
     return buf.getvalue()
 
 
-def _release(tag: str, *, sign: bool = True, tamper: bool = False) -> dict[str, _Resp]:
+def _release(tag: str, *, sign: bool = True, tamper: bool = False, stamp: str | None = None) -> dict[str, _Resp]:
     name = posix_runtime.runtime_asset_name(tag.removeprefix("v"))
-    tar = _runtime_tar()
+    tar = _runtime_tar(stamp)
     sums = f"{hashlib.sha256(tar).hexdigest()}  {name}\n".encode()
     routes = {
         f"{BASE}/{tag}/SHA256SUMS.txt": _Resp(200, sums),
@@ -166,6 +168,10 @@ def test_build_script_pins_match_the_updater() -> None:
     assert pin("LUAJIT_SHA256") == constants.POSIX_LUAJIT_TARBALL_SHA256
     assert pin("LUAUTF8_TAG") == constants.POSIX_LUAUTF8_TAG
     assert pin("LUAUTF8_SHA256") == constants.POSIX_LUAUTF8_TARBALL_SHA256
+    # A hand-built or released runtime carries the stamp the updater compares against.
+    stamp_line = 'printf \'luajit=%s lua-utf8=%s\\n\' "$LUAJIT_COMMIT" "$LUAUTF8_TAG" > "$OUT_DIR/bin/runtime.stamp"'
+    assert stamp_line in script
+    assert posix_runtime.runtime_pin() == f"luajit={pin('LUAJIT_COMMIT')} lua-utf8={pin('LUAUTF8_TAG')}"
 
 
 @pytest.mark.parametrize(
@@ -308,3 +314,13 @@ def test_path_luajit_never_runs_the_engine(posix_env: None, tmp_path: Path, monk
     managed = _installed(eng, None) / "bin" / "luajit"
     assert upd.resolve_luajit_binary(eng) == managed
     assert upd.build_engine_command(eng)[0][0] == str(managed)
+
+
+def test_latest_release_runtime_keeps_the_stamp_it_ships(fake_http: Any, tmp_path: Path) -> None:
+    routes, _ = fake_http
+    routes[LATEST] = _Resp(302, headers={"location": "https://github.com/exilemoulei/pob4agents/releases/tag/v9.9.9"})
+    routes.update(_release("v9.9.9", stamp=posix_runtime.runtime_pin()))
+    got = posix_runtime._try_download_prebuilt_posix_runtime(tmp_path)
+    assert got is not None
+    # Built from the same pins, so the next refresh leaves it alone.
+    assert got[posix_runtime.RUNTIME_STAMP].read_text(encoding="utf-8").strip() == posix_runtime.runtime_pin()

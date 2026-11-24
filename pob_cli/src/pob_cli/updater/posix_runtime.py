@@ -190,8 +190,9 @@ def _try_download_prebuilt_posix_runtime(
 ) -> dict[Path, Path] | None:
     """Download and verify a prebuilt runtime from a pob4agents release; None means build from source.
 
-    Only this pob's own release is built from `runtime_pin()`; one from the latest release is
-    stamped with its tag, so a later refresh (`own_release_only`) replaces it with a matching one.
+    The installed stamp is the one the archive ships (from build_posix_runtime.sh). An older archive
+    without one is stamped with `runtime_pin()` when it is this pob's own release, else with its tag,
+    so a later refresh (`own_release_only`) replaces it with a matching one.
     """
     make_client = _pkg()._make_http_client
     try:
@@ -220,7 +221,11 @@ def _try_download_prebuilt_posix_runtime(
                 if _self_test_runtime(extract_root / "bin") is not None:
                     # Built for a newer libc than this machine has, for example: compile instead.
                     return None
-                pin = runtime_pin() if tag == f"v{__version__}" else f"release {tag}"
+                shipped = extract_root / RUNTIME_STAMP  # releases after 0.9.0 carry the stamp of their build
+                if shipped.is_file():
+                    pin = shipped.read_text(encoding="utf-8").strip()
+                else:
+                    pin = runtime_pin() if tag == f"v{__version__}" else f"release {tag}"
                 return _stamped({rel: extract_root / rel for rel in RUNTIME_FILES}, staging_dir, pin)
     except Exception:
         return None

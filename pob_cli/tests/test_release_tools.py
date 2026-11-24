@@ -181,6 +181,12 @@ def test_pack_posix_is_reproducible_and_keeps_modes_and_links(rt: ModuleType, tm
     with tarfile.open(tmp_path / "a" / "pob4agents-runtime-0.9.0-macos-arm64.tar.gz") as tf:
         assert sorted(tf.getnames()) == ["bin", "bin/lua-utf8.so", "bin/luajit"]
 
+    # build_posix_runtime.sh writes a stamp; the runtime archive ships it so installs keep it.
+    (runtime / "bin" / "runtime.stamp").write_text("luajit=abc lua-utf8=0.1.6\n", encoding="utf-8")
+    rt.pack_posix(dist, runtime, tmp_path / "c", VERSION, "macos-arm64")
+    with tarfile.open(tmp_path / "c" / "pob4agents-runtime-0.9.0-macos-arm64.tar.gz") as tf:
+        assert sorted(tf.getnames()) == ["bin", "bin/lua-utf8.so", "bin/luajit", "bin/runtime.stamp"]
+
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX modes and symlinks")
 def test_verify_accepts_every_platform(rt: ModuleType, tmp_path: Path) -> None:
