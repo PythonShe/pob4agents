@@ -1,4 +1,5 @@
--- Direct JSON character import helper for POSIX headless_runner.lua (no LaunchSubScript needed).
+-- import_character_json: an official character JSON bundle through PoB's own ImportTab, the way
+-- its character import dialog applies it, without the dialog's LaunchSubScript download.
 
 local function shallow_copy(tbl)
 	local out = {}
@@ -10,6 +11,12 @@ local function shallow_copy(tbl)
 	return out
 end
 
+-- __mainObject__ is PoB's `launch`; the build mode lives under launch.main.
+local function build_mode()
+	local m = type(launch) == "table" and launch.main or nil
+	return m and m.modes and m.modes["BUILD"]
+end
+
 return function(params, bridge_dispatcher)
 	if type(params) ~= "table" then
 		error("import_character_json requires params object", 0)
@@ -18,11 +25,10 @@ return function(params, bridge_dispatcher)
 	if type(char_info) ~= "table" then
 		error("import_character_json requires params.char object", 0)
 	end
-	local b = __mainObject__ and __mainObject__.modes and __mainObject__.modes["BUILD"]
-	if not b then
-		bridge_dispatcher("new_build", {})
-		b = __mainObject__ and __mainObject__.modes and __mainObject__.modes["BUILD"]
-	end
+	-- A fresh build, as import_code "replace" gives the XML route: nothing of the previous
+	-- build (config, other sets, skill groups) survives into the imported character.
+	bridge_dispatcher("new_build", {})
+	local b = build_mode()
 	if not b or not b.importTab then
 		error("PoB importTab is not available", 0)
 	end
@@ -53,12 +59,10 @@ return function(params, bridge_dispatcher)
 		tab:ImportItemsAndSkills(item_char, clear_items, clear_skills, ignore_swap)
 	end
 
-	if b.buildFlag ~= nil then
-		b.buildFlag = true
-	end
-	if type(b.OnFrame) == "function" then
-		pcall(b.OnFrame, b)
-	end
+	-- One PoB frame settles the pending rebuild (output, sidebar) as after the dialog closes.
+	b.modFlag = true
+	b.buildFlag = true
+	launch:OnFrame()
 	return {
 		imported = true,
 		name = char_info.name,

@@ -573,7 +573,7 @@ def test_coderabbit_major_fixes_league_filter_shell_safe_proxy_cn_hash_viscera_a
     )
     assert 'name="Head"' in visc_xml and "+50 to maximum Life" in visc_xml
 
-    # 6. POSIX import_character_json failure restores previous live build via import_code
+    # 6. A failed import_character_json restores the previous build, then takes the XML route
     class _FailingPosixWorker(_FakeWorker):
         def call(self, method: str, params: dict[str, Any] | None = None, timeout: float | None = None) -> dict[str, Any]:
             self.calls.append((method, dict(params or {})))
@@ -595,10 +595,12 @@ def test_coderabbit_major_fixes_league_filter_shell_safe_proxy_cn_hash_viscera_a
             "items": {"items": []},
         },
     )
-    with pytest.raises(RuntimeError, match="boom"):
-        importers.load_build_into_worker(
-            fw,
-            source="https://www.pathofexile.com/account/view-profile/alice-1234",
-            char_name="HeroA",
-        )
-    assert any(m == "import_code" and p.get("code") == "PREV_BUILD_CODE" for m, p in fw.calls)
+    res = importers.load_build_into_worker(
+        fw,
+        source="https://www.pathofexile.com/account/view-profile/alice-1234",
+        char_name="HeroA",
+    )
+    assert res["importMethod"] == "official_profile_intl_pob_xml"
+    imports = [p.get("code") for m, p in fw.calls if m == "import_code"]
+    assert imports[0] == "PREV_BUILD_CODE"
+    assert len(imports) == 2 and imports[1] != "PREV_BUILD_CODE"

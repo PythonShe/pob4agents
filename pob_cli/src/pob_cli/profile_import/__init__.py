@@ -126,7 +126,11 @@ def _import_english_bundle(
     *,
     source_hint: str,
 ) -> tuple[str, dict[str, Any]]:
-    """Import an English character bundle via POSIX `import_character_json` or pure-Python PoB XML."""
+    """Import an English character bundle via the host's `import_character_json` or pure-Python PoB XML.
+
+    A failed `import_character_json` (an older host, or PoB raising on the bundle) puts the
+    previous build back and takes the XML route, which needs nothing from the Lua host.
+    """
     if worker.caps.get("importCharacterJson"):
         prev_code = getattr(worker, "last_good_code", None)
         try:
@@ -150,7 +154,6 @@ def _import_english_bundle(
                     worker.call("import_code", {"code": prev_code, "mode": "replace"}, timeout=15.0)
                 except Exception:
                     pass
-            raise
 
     xml_text = character_bundle_to_pob_xml(bundle, pob_root=getattr(worker, "pob_root", None))
     validate_build_xml(xml_text, expected_game="poe1", source_hint=source_hint)
