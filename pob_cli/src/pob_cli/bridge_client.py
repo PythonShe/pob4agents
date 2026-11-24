@@ -27,7 +27,6 @@ from .bridge_protocol import (
     decode_batch_responses,
     read_slot_state,
     rpc_rejection,
-    stage_tree_versions_hint,
     stderr_drain_loop,
     stdout_reader_loop,
     sync_worker_state,
@@ -35,6 +34,7 @@ from .bridge_protocol import (
     validate_rpc_method,
     write_slot_state,
 )
+from .bridge_trees import rpc_tree_stage_error, stage_tree_versions_hint
 from .locale_cfg import current_lang, normalize_lang
 from .updater import (
     build_engine_command,
@@ -411,13 +411,12 @@ class BridgeWorker:
 
             for idx, (method, raw_params) in enumerate(calls):
                 params = raw_params or {}
-                if method == "import_code":
-                    pre_error = self._import_precheck(str(params.get("code") or ""))
-                    if pre_error is not None:
-                        if raise_on_error:
-                            raise pre_error
-                        pre_errors[idx] = pre_error
-                        continue
+                pre_error = self._rpc_precheck(method, params)
+                if pre_error is not None:
+                    if raise_on_error:
+                        raise pre_error
+                    pre_errors[idx] = pre_error
+                    continue
 
                 self._req_counter += 1
                 req_id = self._req_counter
@@ -504,6 +503,11 @@ class BridgeWorker:
         staging = stage_tree_versions_hint(code, self.game_dir)  # offline or a failed download: a fault
         return BridgeError(f"RPC 'import_code' failed: {staging}") if staging else None
 
+    def _rpc_precheck(self, method: str, params: dict[str, Any] | None) -> BridgeError | None:
+        if method == "import_code":
+            return self._import_precheck(str((params or {}).get("code") or ""))
+        return rpc_tree_stage_error(method, params, self.game_dir)
+
     def _restore_after_failed_import_unlocked(self) -> None:
         """Heal the slot after a failed import_code (which may leave b:Shutdown() active / no build loaded)."""
         try:
@@ -563,6 +567,8 @@ class BridgeWorker:
                     if tv_hint and tv_hint not in str(exc):
                         exc.args = (f"{exc} | {tv_hint}",)
                     raise
+            if (pre_error := self._rpc_precheck(method, params)) is not None:
+                raise pre_error
             return self._raw_call_unlocked(method, params, timeout=timeout)
 
     def set_locale(self, lang: str) -> dict[str, Any]:
@@ -588,5 +594,7 @@ class BridgeWorker:
                 tree_version = info.get("treeVersion") or "latest"
             if tree_version not in self._tree_data_cache:
                 params = {"version": tree_version} if tree_version != "latest" else {}
+                if (pre_error := self._rpc_precheck("tree_data", params)) is not None:
+                    raise pre_error
                 self._tree_data_cache[tree_version] = self._raw_call_unlocked("tree_data", params, timeout=20.0)
             return self._tree_data_cache[tree_version]

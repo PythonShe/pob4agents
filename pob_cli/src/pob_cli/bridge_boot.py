@@ -14,7 +14,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from .bridge_protocol import stage_tree_versions_hint
+from .bridge_trees import stage_tree_versions_hint
 from .updater import get_runtime_dir, get_shared_cache_dir
 
 RawCall = Callable[[str, dict[str, Any], float], dict[str, Any]]

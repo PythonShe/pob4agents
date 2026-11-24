@@ -3,8 +3,8 @@
 --   1. Pearl of Tsoatha fast-path avoiding 258k-line stat_descriptions.lua at boot.
 --   2. Data/FlavourText -> {} skip.
 --   3. Defer Main.lua LoadItems uniqueDB/rareDB/visceraDB coroutine (drainable on demand via ensure_item_dbs).
--- Missing TreeData is not resolved here: the Python side stages a build's tree versions before
--- import_code (bridge_protocol.stage_missing_tree_versions).
+-- Missing TreeData is not resolved here: Python stages the tree versions an RPC loads before
+-- the engine runs it (bridge_trees.py).
 -- Data/Crucible and Data/ModScourge load eagerly: PoB walks both with pairs() (Data.lua builds
 -- itemMods.Item from Scourge, ItemsTab lists data.crucible), LuaJIT 5.1 has no __pairs, so a lazy
 -- proxy looked empty, and together they cost about 10 ms.

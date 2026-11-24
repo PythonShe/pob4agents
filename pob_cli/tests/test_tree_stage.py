@@ -11,8 +11,9 @@ from typing import Any
 import httpx
 import pytest
 
-import pob_cli.bridge_protocol as bp
-from pob_cli.bridge_protocol import BridgeError, stage_missing_tree_versions
+import pob_cli.bridge_trees as bp
+from pob_cli.bridge_protocol import BridgeError
+from pob_cli.bridge_trees import stage_missing_tree_versions
 from pob_cli.updater.constants import UpdateError
 from pob_cli.updater.remote import ensure_tree_data_files, missing_tree_data_files
 
@@ -172,3 +173,71 @@ def test_stage_total_time_is_bounded(poe1: Path, monkeypatch: pytest.MonkeyPatch
     assert sum(budgets) <= bp._TREE_STAGE_TOTAL_BUDGET_SEC
     # Well inside the 15 s import_code RPC timeout's caller budget (150 s CLI wait)
     assert bp._TREE_STAGE_TOTAL_BUDGET_SEC < 15.0
+
+
+def _game_versions(poe1: Path) -> None:
+    (poe1 / "GameVersions.lua").write_text(
+        'treeVersionList = { "2_6", "3_6", "3_19", "3_28_alternate", "3_28", "3_30_ruthless", "3_30" }\n',
+        encoding="utf-8",
+    )
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("https://www.pathofexile.com/passive-skill-tree/3.19.2/AAAABgMA", "3_19"),
+        ("https://www.pathofexile.com/fullscreen-passive-skill-tree/3.28.0/AAAA", "3_28"),
+        ("https://www.pathofexile.com/passive-skill-tree/ruthless/AAAA", "3_30_ruthless"),
+        ("https://www.pathofexile.com/passive-skill-tree/AAAA", "3_30"),
+        ("https://www.pathofexile.com/passive-skill-tree/3.99.0/AAAA", "3_30"),  # out of range: latest
+        ("https://www.pathofexile.com/passive-skill-tree/2.6.2/AAAA", "3_30"),  # before defaultTreeVersion
+        ("https://poeskilltree.com/?v=3.19.0#AAAA", "3_19"),
+        ("https://poeplanner.com/AAAA", None),
+        ("http://poeurl.com/dABz", None),
+    ],
+)
+def test_tree_url_version_follows_pobs_import_dialog(poe1: Path, url: str, expected: str | None) -> None:
+    _game_versions(poe1)
+    assert bp.tree_url_version(url, poe1) == expected
+
+
+def test_rpc_tree_versions_names_what_each_rpc_loads(poe1: Path) -> None:
+    _game_versions(poe1)
+    assert bp.rpc_tree_versions("tree_data", {"version": "3_19"}, poe1) == ["3_19"]
+    assert bp.rpc_tree_versions("tree_data", {}, poe1) == []
+    assert bp.rpc_tree_versions("convert_tree", {"version": "3_28", "all": True}, poe1) == ["3_28"]
+    link = "https://www.pathofexile.com/passive-skill-tree/3.19.2/AAAA"
+    assert bp.rpc_tree_versions("import_tree_url", {"url": link, "title": "x"}, poe1) == ["3_19"]
+    assert bp.rpc_tree_versions("get_stats", {"version": "3_19"}, poe1) == []
+
+
+def test_worker_stages_tree_versions_before_any_rpc_that_loads_them(
+    poe1: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from pob_cli.bridge_client import BridgeWorker
+
+    _game_versions(poe1)
+    w = BridgeWorker(slot_name="stage", pob_dir=poe1.parent, runtime_dir=poe1.parent / "rt")
+    sent: list[str] = []
+    monkeypatch.setattr(w, "_raw_call_unlocked", lambda method, *_a, **_k: sent.append(method) or {})
+
+    # Offline: refused with the fix-it hint, and the engine never sees the call
+    monkeypatch.setenv("POB_OFFLINE", "1")
+    link = "https://www.pathofexile.com/passive-skill-tree/3.19.2/AAAA"
+    for method, params in (
+        ("convert_tree", {"version": "3_19"}),
+        ("tree_data", {"version": "3_19"}),
+        ("import_tree_url", {"url": link, "title": "t"}),
+    ):
+        with pytest.raises(BridgeError, match=rf"RPC '{method}' failed: .*'3_19'.*POB_OFFLINE=1"):
+            w.call(method, params)
+    with pytest.raises(BridgeError, match="'3_19'"):
+        w.get_cached_tree_data("3_19")
+    assert sent == []
+
+    # Online: fetched first, then the call goes through
+    seen = _serve(monkeypatch)
+    w.call("convert_tree", {"version": "3_19"})
+    assert (poe1 / "TreeData" / "3_19" / "tree.lua").read_bytes() == TREE_319
+    assert [u.rsplit("/", 1)[-1] for u in seen] == ["tree.lua"]
+    assert sent == ["convert_tree"]
