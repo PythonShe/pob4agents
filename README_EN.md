@@ -30,7 +30,7 @@ If you've never used one before, search YouTube for a quick setup tutorial.
 
 Once installed, open a fresh chat and drop in your `poe.ninja` link, official PoE profile link (International or CN), or PoB export link/code — it recognizes all of them.
 
-(Public International profiles work with no login; CN server and private profiles need a session cookie — see below. Note that the official profile API doesn't include Bandits or Pantheon, so double-check those with your agent after importing.)
+(Note that the official profile API doesn't include Bandits or Pantheon, so double-check those with your agent after importing.)
 
 Pick a smarter model if you can (e.g. Claude Opus / Gemini / GPT), though lighter models like DeepSeek work fine too.
 
