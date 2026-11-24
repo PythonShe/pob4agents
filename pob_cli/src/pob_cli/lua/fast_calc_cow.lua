@@ -395,7 +395,7 @@ local function rpc_cow_snapshot(_)
 		masteryCnt = sp.allocatedMasteryCount, masteryTypeCnt = sp.allocatedMasteryTypeCount,
 		masteryTypes = shallow_copy(sp.allocatedMasteryTypes), tattooTypes = shallow_copy(sp.allocatedTattooTypes),
 		masterySel = shallow_copy(sp.masterySelections), hashOvr = shallow_copy(sp.hashOverrides),
-		slotSel = sl_s, slotAct = sl_a, setSel = st_s, setAct = st_a,
+		slotSel = sl_s, slotAct = sl_a, setSel = st_s, setAct = st_a, weaponSwap = (it.activeItemSet or {}).useSecondWeaponSet and true or false,
 		jewelIds = j_ids, itemsRef = i_ref, itemRaw = i_raw, itemOrderList = copy_array(it.itemOrderList),
 		groups = grps, cfgIn = shallow_copy((cs and cs.input) or ct.input), cmods = clone_cmods(cs and cs.customModsList), party = snap_party(b.partyTab),
 	})
@@ -422,6 +422,10 @@ local function rpc_cow_restore(params)
 		if cl and type(cl.SetText) == "function" then cl:SetText(tostring(snap.charLvl)) end
 	end
 	local it_d, j_d, tb_d = restore_items(b, snap)
+	-- The weapon swap flag lives on the item set, not in a slot, so restore_items never sees it.
+	local aset = b.itemsTab and b.itemsTab.activeItemSet
+	local sw_d = type(aset) == "table" and (aset.useSecondWeaponSet and true or false) ~= snap.weaponSwap
+	if sw_d then aset.useSecondWeaponSet = snap.weaponSwap end
 	local sp_d = restore_spec(b, snap, j_d)
 	local it, sp = b.itemsTab, b.spec
 	if (it_d or tb_d or j_d or sp_d) and type(it) == "table" then
@@ -438,7 +442,7 @@ local function rpc_cow_restore(params)
 	local sk_d, cf_d, pt_d = restore_skills(b, snap), restore_config(b, snap), restore_party(b, snap.party)
 	-- The config mod list bakes in the character level (set_build_field "level" rebuilds it too).
 	if sc_d and not cf_d and type(b.configTab.BuildModList) == "function" then b.configTab:BuildModList() end
-	if sc_d or it_d or sp_d or sk_d or cf_d or pt_d then
+	if sc_d or sw_d or it_d or sp_d or sk_d or cf_d or pt_d then
 		if type(wipeGlobalCache) == "function" then wipeGlobalCache() end
 		b.buildFlag = true
 		if params.rebuild ~= false then

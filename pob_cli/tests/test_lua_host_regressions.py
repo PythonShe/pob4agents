@@ -89,3 +89,15 @@ def test_agent_probe_build_reads_conditions_with_var_lists(worker: BridgeWorker)
     gen = worker.call("trade_generate_query", {"slotName": "Ring 1"}, timeout=120.0)
     assert gen["slotConstraints"]["slot"] == "Ring 1"
 
+
+def test_cow_restore_resets_weapon_swap(worker: BridgeWorker) -> None:
+    if not worker.caps.get("cowSnapshot"):
+        pytest.skip("host has no CoW snapshots")
+    _load_example(worker)
+    before = worker.call("get_stats", {})["stats"]["FullDPS"]
+    snap = worker.call("cow_snapshot", {})["snapId"]
+    worker.call("set_weapon_swap", {"on": True})
+    assert worker.call("get_stats", {})["stats"]["FullDPS"] != before
+    worker.call("cow_restore", {"snapId": snap, "drop": True})
+    assert worker.call("list_items", {})["useSecondWeaponSet"] is False
+    assert worker.call("get_stats", {})["stats"]["FullDPS"] == pytest.approx(before, rel=1e-9)
