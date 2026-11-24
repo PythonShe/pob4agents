@@ -1,5 +1,6 @@
 -- Pure-Lua real-time display translator for Path of Building + PobTools bridge.lua.
 -- Supports zh-CN (Data/poe1/zh-rCN), zh-TW (Data/poe1/zh-rTW), and en (pass-through).
+local H = require("pob_host")
 local M = {}
 
 local LANG_ALIASES = {
@@ -40,20 +41,13 @@ local function trim(s)
 	return (s:gsub("^%s+", ""):gsub("%s+$", ""))
 end
 
-local function norm_path(p)
-	if type(p) ~= "string" or p == "" then return "." end
-	local s = p:gsub("\\", "/")
-	if s == "/" or s:match("^%a:/$") then return s end
-	return (s:gsub("/+$", ""))
-end
-
 function M.normalize_lang(val)
 	if type(val) ~= "string" then return nil end
 	local k = trim(val):lower()
 	return LANG_ALIASES[k]
 end
 
-local zj = dofile(SELF_DIR .. "/zh_json.lua")
+local zj = require("zh_json")
 local read_file_bytes, load_entries_into, load_id_table = zj.read_file_bytes, zj.load_entries_into, zj.load_id_table
 
 local han_fold = nil -- false once a lookup failed
@@ -417,21 +411,31 @@ local function socket_group_name_map(groups)
 	return map
 end
 
--- bridge.lua caches tree_data per ":en"/":zh" only, so zh-CN and zh-TW would share one copy.
--- Its cache is a local of M.tree_data, reached through the dispatcher the runner kept.
-local function clear_bridge_tree_cache()
-	local disp = rawget(_G, "PobToolsBridgeRawDispatch")
-	if type(disp) ~= "function" then return end
-	local function upval(fn, want)
-		for i = 1, 200 do
-			local n, v = debug.getupvalue(fn, i)
-			if n == nil then return nil end
-			if n == want then return v end
-		end
+-- bridge.lua caches tree_data per tree version and ":en"/":zh", so zh-CN and zh-TW would share
+-- one copy. The host answers tree_data and asks the bridge under a version alias per language
+-- ("3_30@zh-TW", held in main.tree for the call only), so each language gets its own copy. Its
+-- output names the real version; translation off (":en" in the bridge) needs no alias.
+local function tree_data(params, dispatch)
+	params = type(params) == "table" and params or {}
+	if not translate_enabled or active_lang == "en" then return dispatch("tree_data", params) end
+	local v = params.version
+	if type(v) ~= "string" or v == "" then
+		local b = H.get_build({ rebuild = false, optional = true })
+		v = b and b.spec and b.spec.treeVersion or latestTreeVersion
 	end
-	local bm = upval(disp, "M")
-	local cache = type(bm) == "table" and type(bm.tree_data) == "function" and upval(bm.tree_data, "treeCache")
-	if type(cache) == "table" then for k in pairs(cache) do cache[k] = nil end end
+	local m = type(launch) == "table" and launch.main or nil
+	local tree = type(v) == "string" and m and type(m.tree) == "table" and m:LoadTree(v)
+	if not tree then return dispatch("tree_data", params) end
+	local alias, aliased = v .. "@" .. active_lang, {}
+	for k, val in pairs(params) do aliased[k] = val end
+	aliased.version = alias
+	m.tree[alias] = tree
+	local ok, out = pcall(dispatch, "tree_data", aliased)
+	m.tree[alias] = nil
+	-- A bridge that refuses the alias still answers, with its shared copy.
+	if not ok or type(out) ~= "table" then return dispatch("tree_data", params) end
+	out.treeVersion = v
+	return out
 end
 
 function M.set_locale(lang_or_params)
@@ -440,7 +444,6 @@ function M.set_locale(lang_or_params)
 	if not norm then
 		error("unsupported locale: " .. tostring(raw) .. " (expected zh-CN, zh-TW, or en)", 0)
 	end
-	if norm ~= active_lang then clear_bridge_tree_cache() end
 	active_lang = norm
 	if norm == "en" then
 		translate_enabled = false
@@ -471,7 +474,7 @@ function M.get_locale()
 end
 
 function M.install_pre_bridge(root_path, opts)
-	engine_root = norm_path(root_path or os.getenv("POB_ENGINE_ROOT") or ".")
+	engine_root = H.norm_path(root_path or os.getenv("POB_ENGINE_ROOT") or ".")
 	dict_cache = {}
 	missing_subdirs = {}
 	draw_override = nil
@@ -502,6 +505,7 @@ end
 M.rpc_handlers = {
 	set_locale = function(p) return M.set_locale(type(p) == "table" and p.lang or p) end,
 	get_locale = function(_p) return M.get_locale() end,
+	tree_data = tree_data,
 }
 
 return M

@@ -2,9 +2,12 @@
 -- Installs _G.PobToolsReverseText, which bridge.lua's normalize_item_text calls for add_item,
 -- parse_item_text, item_tooltip and item_edit_begin. pob-zh.exe used to provide it natively;
 -- without it Chinese text reached PoB untranslated and its base and mods were not recognised.
--- Built lazily, on the first text with non-ASCII bytes, from Data/poe1/zh-rTW and zh-rCN:
+-- Built lazily, on the first text with non-ASCII bytes, from Data/poe1/zh-rTW and zh-rCN (read
+-- through zh_json.lua, the dictionary reader zh_translate.lua shares):
 -- stat templates (both locales), base and unique names, and zh-rTW's item_metadata.json headers.
 -- Where one Chinese line has several English readings, the one modLib.parseMod accepts wins.
+
+local zj = require("zh_json")
 
 local M = {}
 local root = "."
@@ -36,20 +39,15 @@ local function each_pair(spec, fn)
 	for zh, en in spec:gmatch("([^=;]+)=([^;]+)") do fn(zh, en) end
 end
 
+-- Only the small structured files (item_metadata.json, synonyms.json) need a full JSON decode;
+-- the string maps come from zh_json's shared reader.
 local function read_json(path)
-	local f = io.open(path, "rb")
-	if not f then return nil end
-	local s = f:read("*a")
-	f:close()
+	local raw = zj.read_file_bytes(path)
+	if not raw then return nil end
 	local ok, dk = pcall(require, "dkjson")
 	if not ok or type(dk) ~= "table" then return nil end
-	local obj = dk.decode(s)
+	local obj = dk.decode(raw)
 	return type(obj) == "table" and obj or nil
-end
-
-local function entries(path)
-	local obj = read_json(path)
-	return obj and type(obj.entries) == "table" and obj.entries or nil
 end
 
 local function push(tbl, key, val, cap)
@@ -79,7 +77,7 @@ local function add_name(map, zh, en)
 end
 
 local function load_meta(r, dir)
-	local meta = read_json(dir .. "item_metadata.json")
+	local meta = read_json(dir .. "/item_metadata.json")
 	if not meta then return end
 	local function pairs_of(list, target)
 		for _, p in ipairs(type(list) == "table" and list or {}) do
@@ -108,19 +106,19 @@ local function load_tables()
 	}
 	local any = false
 	for _, sub in ipairs({ "zh-rTW", "zh-rCN" }) do
-		local dir = root .. "/Data/poe1/" .. sub .. "/"
+		local dir = root .. "/Data/poe1/" .. sub
 		-- ggpk_reverse.json first: it names the English line PoB parses when a Chinese line is shared
 		for _, f in ipairs({ "ggpk_reverse.json", "stats.json", "ggpk_full.json", "stat_wrappers.json" }) do
-			local e = entries(dir .. f)
+			local e = zj.entries(dir, f)
 			if e then
 				any = true
 				for en, zh in pairs(e) do add_stat(r, zh, en) end
 			end
 		end
-		for en, zh in pairs(entries(dir .. "items.json") or {}) do add_name(r.bases, zh, en) end
-		for en, zh in pairs(entries(dir .. "uniques.json") or {}) do add_name(r.uniques, zh, en) end
+		for en, zh in pairs(zj.entries(dir, "items.json") or {}) do add_name(r.bases, zh, en) end
+		for en, zh in pairs(zj.entries(dir, "uniques.json") or {}) do add_name(r.uniques, zh, en) end
 		load_meta(r, dir)
-		local syn = read_json(dir .. "synonyms.json")
+		local syn = read_json(dir .. "/synonyms.json")
 		for _, p in ipairs(syn and type(syn.replacements) == "table" and syn.replacements or {}) do
 			if type(p) == "table" and type(p.from) == "string" and type(p.to) == "string" and p.from ~= "" then
 				r.syn[#r.syn + 1] = { p.from, p.to }

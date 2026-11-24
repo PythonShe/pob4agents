@@ -333,7 +333,7 @@ function require(nm) if nm == "lcurl.safe" or nm == "lcurl" then return nil end;
 
 -- PobTools bridge host hooks
 local bridge_dispatcher = nil
-function PobToolsBridgeSetDispatcher(fn) if type(fn) ~= "function" then error("PobToolsBridgeSetDispatcher expects a function") end; bridge_dispatcher = fn; PobToolsBridgeRawDispatch = fn end
+function PobToolsBridgeSetDispatcher(fn) if type(fn) ~= "function" then error("PobToolsBridgeSetDispatcher expects a function") end; bridge_dispatcher = fn end
 function PobToolsBridgeEmit(ev, d) send_event(ev, d) end
 function PobToolsHeadless() return true end
 function PobToolsGame() return os.getenv("POB_GAME") or "poe1" end

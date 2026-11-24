@@ -1,5 +1,6 @@
--- Minimal readers for PobTools' flat zh JSON files ({"entries": {...}, "templates": {...}}),
--- split from zh_translate.lua; no full JSON parser is needed for these string maps.
+-- The one reader of PobTools' flat zh dictionaries ({"entries": {...}, "templates": {...}}) for
+-- zh_translate.lua and zh_reverse.lua: a flat string-map parser (no full JSON decode), and each
+-- file parsed once per process. Callers get the cached tables and must not change them.
 local bit = require("bit")
 
 local ESC_BYTE = {
@@ -137,31 +138,49 @@ local function read_file_bytes(path)
 	return data
 end
 
+-- path -> { entries = tbl, templates = tbl or false }, or false for a file that cannot be read.
+-- Weak values: a file stays parsed while a module holds its tables, so zh_reverse's one-off
+-- reads of the large stat maps do not stay resident after its reverse tables are built.
+local cache = setmetatable({}, { __mode = "v" })
+
+local function load_file(path)
+	local c = cache[path]
+	if c == nil then
+		local raw = read_file_bytes(path)
+		c = raw and {
+			entries = load_flat_section(raw, "entries", {}),
+			templates = load_flat_section(raw, "templates", nil) or false,
+		} or false
+		cache[path] = c
+	end
+	return c or nil
+end
+
+-- The "entries" map of dir/filename ({} when the file has none), nil when it cannot be read.
+local function entries(dir, filename)
+	local c = load_file(dir .. "/" .. filename)
+	return c and c.entries
+end
+
 local function load_entries_into(dir, filename, primary_tbl, merged_tbl)
-	local raw = read_file_bytes(dir .. "/" .. filename)
-	if not raw then return false end
-	if primary_tbl then
-		local tmp = load_flat_section(raw, "entries", {})
-		for k, v in pairs(tmp) do
-			primary_tbl[k] = v
-			if merged_tbl then merged_tbl[k] = v end
-		end
-	elseif merged_tbl then
-		load_flat_section(raw, "entries", merged_tbl)
+	local e = entries(dir, filename)
+	if not e then return false end
+	for k, v in pairs(e) do
+		if primary_tbl then primary_tbl[k] = v end
+		if merged_tbl then merged_tbl[k] = v end
 	end
 	return true
 end
 
 local function load_id_table(dir, filename)
-	local raw = read_file_bytes(dir .. "/" .. filename)
-	if not raw then return nil, nil end
-	local entries = load_flat_section(raw, "entries", {})
-	local templates = load_flat_section(raw, "templates", nil)
-	return entries, templates
+	local c = load_file(dir .. "/" .. filename)
+	if not c then return nil, nil end
+	return c.entries, c.templates or nil
 end
 
 return {
 	read_file_bytes = read_file_bytes,
+	entries = entries,
 	load_entries_into = load_entries_into,
 	load_id_table = load_id_table,
 }

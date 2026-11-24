@@ -367,6 +367,7 @@ def test_zh_translate_lua_synthetic_and_missing_fallback(tmp_path: Path) -> None
     script = tmp_path / "run_zt.lua"
     script.write_text(
         f"""
+package.path = {json.dumps((LUA_DIR / "?.lua").as_posix(), ensure_ascii=False)} .. ";" .. package.path
 local zt = assert(loadfile({json.dumps((LUA_DIR / "zh_translate.lua").as_posix(), ensure_ascii=False)}))()
 assert(zt.install_pre_bridge({json.dumps(eng.as_posix(), ensure_ascii=False)}, {{ lang = "zh-CN" }}) == true)
 assert(type(PobToolsSetTranslate) == "function" and type(PobToolsGetTranslate) == "function")
@@ -439,6 +440,7 @@ def test_zh_translate_lua_real_dictionaries_speed_and_accuracy(tmp_path: Path) -
     script = tmp_path / "bench_real_zt.lua"
     script.write_text(
         f"""
+package.path = {json.dumps((LUA_DIR / "?.lua").as_posix(), ensure_ascii=False)} .. ";" .. package.path
 local zt = assert(loadfile({json.dumps((LUA_DIR / "zh_translate.lua").as_posix(), ensure_ascii=False)}))()
 zt.install_pre_bridge({json.dumps(real_eng.as_posix(), ensure_ascii=False)}, {{ lang = "zh-CN" }})
 
