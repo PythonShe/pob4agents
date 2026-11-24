@@ -1,5 +1,6 @@
 -- import_character_json: an official character JSON bundle through PoB's own ImportTab, the way
 -- its character import dialog applies it, without the dialog's LaunchSubScript download.
+local H = require("pob_host")
 
 local function shallow_copy(tbl)
 	local out = {}
@@ -9,12 +10,6 @@ local function shallow_copy(tbl)
 		end
 	end
 	return out
-end
-
--- __mainObject__ is PoB's `launch`; the build mode lives under launch.main.
-local function build_mode()
-	local m = type(launch) == "table" and launch.main or nil
-	return m and m.modes and m.modes["BUILD"]
 end
 
 return function(params, bridge_dispatcher)
@@ -28,7 +23,7 @@ return function(params, bridge_dispatcher)
 	-- A fresh build, as import_code "replace" gives the XML route: nothing of the previous
 	-- build (config, other sets, skill groups) survives into the imported character.
 	bridge_dispatcher("new_build", {})
-	local b = build_mode()
+	local b = H.get_build({ optional = true })
 	if not b or not b.importTab then
 		error("PoB importTab is not available", 0)
 	end
@@ -62,7 +57,7 @@ return function(params, bridge_dispatcher)
 	-- One PoB frame settles the pending rebuild (output, sidebar) as after the dialog closes.
 	b.modFlag = true
 	b.buildFlag = true
-	launch:OnFrame()
+	H.frame()
 	return {
 		imported = true,
 		name = char_info.name,

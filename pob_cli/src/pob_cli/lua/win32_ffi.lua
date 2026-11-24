@@ -4,6 +4,7 @@
 
 local ffi = require("ffi")
 local bit = require("bit")
+local H = require("pob_host")
 
 local M = {}
 local _cdef_done = false
@@ -47,14 +48,6 @@ local function ensure_cdef()
 			WIN_DWORD nFileSizeLow;
 		} WIN_FILE_ATTR_DATA;
 
-		int MultiByteToWideChar(unsigned int CodePage, WIN_DWORD dwFlags,
-			const char *lpMultiByteStr, int cbMultiByte,
-			WIN_WCHAR *lpWideCharStr, int cchWideChar);
-		int WideCharToMultiByte(unsigned int CodePage, WIN_DWORD dwFlags,
-			const WIN_WCHAR *lpWideCharStr, int cchWideChar,
-			char *lpMultiByteStr, int cbMultiByte,
-			const char *lpDefaultChar, WIN_BOOL *lpUsedDefaultChar);
-
 		WIN_BOOL QueryPerformanceCounter(WIN_LONGLONG *lpPerformanceCount);
 		WIN_BOOL QueryPerformanceFrequency(WIN_LONGLONG *lpFrequency);
 		WIN_BOOL CreateDirectoryW(const WIN_WCHAR *lpPathName, void *lpSecurityAttributes);
@@ -67,78 +60,15 @@ local function ensure_cdef()
 		WIN_HANDLE FindFirstFileW(const WIN_WCHAR *lpFileName, WIN_FIND_DATAW *lpFindFileData);
 		WIN_BOOL FindNextFileW(WIN_HANDLE hFindFile, WIN_FIND_DATAW *lpFindFileData);
 		WIN_BOOL FindClose(WIN_HANDLE hFindFile);
-
-		typedef struct pob_z_stream_s {
-			const unsigned char *next_in;
-			unsigned int avail_in;
-			unsigned long total_in;
-			unsigned char *next_out;
-			unsigned int avail_out;
-			unsigned long total_out;
-			const char *msg;
-			void *state;
-			void *zalloc;
-			void *zfree;
-			void *opaque;
-			int data_type;
-			unsigned long adler;
-			unsigned long reserved;
-		} pob_z_stream;
-
-		const char *zlibVersion(void);
-		int inflateInit2_(pob_z_stream *strm, int windowBits, const char *version, int stream_size);
-		int inflate(pob_z_stream *strm, int flush);
-		int inflateEnd(pob_z_stream *strm);
-		int deflateInit2_(pob_z_stream *strm, int level, int method, int windowBits,
-			int memLevel, int strategy, const char *version, int stream_size);
-		int deflate(pob_z_stream *strm, int flush);
-		int deflateEnd(pob_z_stream *strm);
 	]]
 	_cdef_done = true
 end
 
-local CP_UTF8 = 65001
 local FILE_ATTR_DIRECTORY = 0x10
 local FILE_ATTR_REPARSE_POINT = 0x400
 local INVALID_FILE_ATTRIBUTES = 0xFFFFFFFF
 
-local function utf8_to_wide(s)
-	if type(s) ~= "string" then
-		s = tostring(s or "")
-	end
-	local n = ffi.C.MultiByteToWideChar(CP_UTF8, 0, s, #s, nil, 0)
-	local buf = ffi.new("WIN_WCHAR[?]", n + 1)
-	if n > 0 then
-		ffi.C.MultiByteToWideChar(CP_UTF8, 0, s, #s, buf, n)
-	end
-	buf[n] = 0
-	return buf
-end
-
-local function wide_to_utf8(wbuf, wlen)
-	wlen = wlen or -1
-	local n = ffi.C.WideCharToMultiByte(CP_UTF8, 0, wbuf, wlen, nil, 0, nil, nil)
-	if n <= 0 then
-		return ""
-	end
-	local buf = ffi.new("char[?]", n + 1)
-	ffi.C.WideCharToMultiByte(CP_UTF8, 0, wbuf, wlen, buf, n, nil, nil)
-	if wlen == -1 then
-		return ffi.string(buf, n - 1)
-	end
-	return ffi.string(buf, n)
-end
-
-local function strip_trailing_slash(p)
-	if not p or p == "" then
-		return "."
-	end
-	local s = p:gsub("\\", "/")
-	if s:match("^%a:/$") or s == "/" then
-		return s
-	end
-	return (s:gsub("/+$", ""))
-end
+local utf8_to_wide, wide_to_utf8, strip_trailing_slash = H.utf8_to_wide, H.wide_to_utf8, H.norm_path
 
 local function filetime_to_unix(ft)
 	local ticks = tonumber(ft.dwHighDateTime) * 4294967296.0 + tonumber(ft.dwLowDateTime)
@@ -367,95 +297,7 @@ function M.install(game_dir)
 	end
 
 	-- zlib1.dll Inflate / Deflate
-	local zlib = load_zlib(gdir)
-	local z_ver = zlib.zlibVersion()
-	local z_stream_size = ffi.sizeof("pob_z_stream")
-	local Z_OK, Z_STREAM_END, Z_FINISH, Z_NO_FLUSH, Z_BUF_ERROR = 0, 1, 4, 0, -5
-
-	local function zlib_inflate_wbits(data, wbits)
-		local strm = ffi.new("pob_z_stream")
-		if zlib.inflateInit2_(strm, wbits, z_ver, z_stream_size) ~= Z_OK then
-			return nil, "inflateInit2 failed"
-		end
-		strm.next_in = ffi.cast("const unsigned char *", data)
-		strm.avail_in = #data
-		local chunk_size = 65536
-		local buf = ffi.new("unsigned char[?]", chunk_size)
-		local parts = {}
-		local rc = Z_OK
-		while true do
-			strm.next_out = buf
-			strm.avail_out = chunk_size
-			rc = zlib.inflate(strm, Z_NO_FLUSH)
-			local produced = chunk_size - tonumber(strm.avail_out)
-			if produced > 0 then
-				parts[#parts + 1] = ffi.string(buf, produced)
-			end
-			if rc == Z_STREAM_END then
-				break
-			elseif rc ~= Z_OK then
-				zlib.inflateEnd(strm)
-				return nil, "inflate failed: " .. tostring(rc)
-			end
-			if tonumber(strm.avail_in) == 0 and produced == 0 then
-				zlib.inflateEnd(strm)
-				return nil, "inflate truncated input"
-			end
-		end
-		zlib.inflateEnd(strm)
-		return table.concat(parts)
-	end
-
-	local function win_inflate(data)
-		if type(data) ~= "string" then
-			return nil, "Inflate: expected string"
-		end
-		if #data == 0 then
-			return ""
-		end
-		local out, err = zlib_inflate_wbits(data, 47) -- auto zlib/gzip
-		if out ~= nil then
-			return out
-		end
-		local raw_out = zlib_inflate_wbits(data, -15) -- raw deflate fallback
-		if raw_out ~= nil then
-			return raw_out
-		end
-		return nil, err
-	end
-
-	local function win_deflate(data, is_gzip)
-		if type(data) ~= "string" then
-			return nil, "Deflate: expected string"
-		end
-		local strm = ffi.new("pob_z_stream")
-		local wbits = is_gzip and (15 + 16) or 15
-		if zlib.deflateInit2_(strm, -1, 8, wbits, 8, 0, z_ver, z_stream_size) ~= Z_OK then
-			return nil, "deflateInit2 failed"
-		end
-		strm.next_in = ffi.cast("const unsigned char *", data)
-		strm.avail_in = #data
-		local chunk_size = 65536
-		local buf = ffi.new("unsigned char[?]", chunk_size)
-		local parts = {}
-		while true do
-			strm.next_out = buf
-			strm.avail_out = chunk_size
-			local rc = zlib.deflate(strm, Z_FINISH)
-			local produced = chunk_size - tonumber(strm.avail_out)
-			if produced > 0 then
-				parts[#parts + 1] = ffi.string(buf, produced)
-			end
-			if rc == Z_STREAM_END then
-				break
-			elseif rc ~= Z_OK and rc ~= Z_BUF_ERROR then
-				zlib.deflateEnd(strm)
-				return nil, "deflate failed: " .. tostring(rc)
-			end
-		end
-		zlib.deflateEnd(strm)
-		return table.concat(parts)
-	end
+	local win_inflate, win_deflate = H.zlib_codec(load_zlib(gdir))
 
 	-- Switch cwd to game_dir immediately so relative PoB loads work
 	win_chdir(gdir)

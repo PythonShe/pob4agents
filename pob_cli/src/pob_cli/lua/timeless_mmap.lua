@@ -7,11 +7,11 @@ local t_sort, t_concat, s_fmt = table.sort, table.concat, string.format
 local M = {}
 
 local IS_WIN = (ffi.os == "Windows")
-local kernel32 = nil
+local kernel32, utf8_to_wide = nil, nil
 
 if IS_WIN then
+	utf8_to_wide = require("pob_host").utf8_to_wide
 	pcall(ffi.cdef, [[
-		int MultiByteToWideChar(unsigned int, unsigned long, const char *, int, uint16_t *, int);
 		void *CreateFileW(const uint16_t *, unsigned long, unsigned long, void *, unsigned long, unsigned long, void *);
 		int GetFileSizeEx(void *, int64_t *);
 		void *CreateFileMappingW(void *, void *, unsigned long, unsigned long, unsigned long, const uint16_t *);
@@ -36,12 +36,6 @@ local MAP_FAILED = ffi.cast("void *", -1) -- also Win32's INVALID_HANDLE_VALUE
 local cfg, mapped_cache = {}, {}
 local gv_offsets_cache, gv_seed_size_cache, gv_end_cache, map_key
 
-local function utf8_to_wide(s)
-	local n = kernel32.MultiByteToWideChar(65001, 0, s, -1, nil, 0)
-	local buf = n > 0 and ffi.new("uint16_t[?]", n)
-	return buf and kernel32.MultiByteToWideChar(65001, 0, s, -1, buf, n) > 0 and buf or nil
-end
-
 local function as_view(raw_ptr, size, path, release)
 	local closed = false
 	local function cleanup() if not closed then closed = true; release() end end
@@ -55,9 +49,7 @@ function M.map_file(path)
 	if type(path) ~= "string" or path == "" then return nil, "empty path" end
 	if IS_WIN then
 		if not kernel32 then return nil, "kernel32 unavailable" end
-		local wpath = utf8_to_wide(path)
-		if not wpath then return nil, "utf8 conversion failed" end
-		local hfile = kernel32.CreateFileW(wpath, 0x80000000, 0x00000001, nil, 3, 0x80, nil)
+		local hfile = kernel32.CreateFileW(utf8_to_wide(path), 0x80000000, 0x00000001, nil, 3, 0x80, nil)
 		if hfile == nil or hfile == MAP_FAILED then return nil, "CreateFileW failed" end
 		local fsize = ffi.new("int64_t[1]")
 		if kernel32.GetFileSizeEx(hfile, fsize) == 0 or fsize[0] <= 0 then

@@ -229,8 +229,8 @@ local function load_meta_file(meta_path)
 end
 
 local function active_tree_ver()
-	return (main and main.modes and main.modes["BUILD"] and main.modes["BUILD"].spec
-		and main.modes["BUILD"].spec.treeVersion) or latestTreeVersion
+	local b = require("pob_host").get_build({ rebuild = false, optional = true })
+	return (b and b.spec and b.spec.treeVersion) or latestTreeVersion
 end
 
 local function ensure_tree_graphs(need_abyss)

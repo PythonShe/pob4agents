@@ -1,4 +1,5 @@
 -- Lua CoW snapshot/restore (C2c); direct_calc (C1/C3) lives in fast_calc_direct.lua.
+local H = require("pob_host")
 local M = {}
 local t_insert, t_remove = table.insert, table.remove
 -- Callers drop their snapshots, but a skipped drop (error path, killed client) must not pin
@@ -6,11 +7,10 @@ local t_insert, t_remove = table.insert, table.remove
 local MAX_SNAPS = 16
 local snapshots, snap_order, next_seq = {}, {}, 0
 
+-- Snapshots read and write the build as it stands, and direct_calc runs its own calculation
+-- pass, so neither settles a pending rebuild first.
 local function get_build()
-	local m = _G.main or (__mainObject__ and (__mainObject__.modes and __mainObject__ or __mainObject__.main))
-	local b = m and m.modes and m.modes["BUILD"]
-	if not b or not b.calcsTab then error("No active PoB build loaded", 0) end
-	return b
+	return H.get_build({ rebuild = false })
 end
 
 local function shallow_copy(t)
@@ -445,15 +445,7 @@ local function rpc_cow_restore(params)
 	if sc_d or sw_d or it_d or sp_d or sk_d or cf_d or pt_d then
 		if type(wipeGlobalCache) == "function" then wipeGlobalCache() end
 		b.buildFlag = true
-		if params.rebuild ~= false then
-			if _G.launch and type(_G.launch.OnFrame) == "function" then _G.launch:OnFrame()
-			else
-				if b.skillsTab and type(b.skillsTab.UpdateSocketGroups) == "function" then b.skillsTab:UpdateSocketGroups() end
-				b.calcsTab:BuildOutput()
-				if type(b.RefreshStatList) == "function" then b:RefreshStatList() end
-				b.buildFlag = false
-			end
-		end
+		if params.rebuild ~= false then H.frame() end
 	end
 	if params.drop == true then forget(sid) else remember(sid, snap) end
 	return { ok = true }

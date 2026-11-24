@@ -1,5 +1,7 @@
 -- Zero-intrusion agent-native PoB probes: agent_probe_build, eval_scenario_envelope, compute_grad_build.
 local calcs = require("Modules.Calcs")
+local H = require("pob_host")
+local json_obj, now_ms, get_build = H.json_obj, H.now_ms, H.get_build
 local M = {}
 
 local RESISTS = { "Fire", "Cold", "Lightning", "Chaos" }
@@ -25,22 +27,6 @@ local CORE_DIMS = {
 local ALL_DIMS = {}
 for i, d in ipairs(CORE_DIMS) do ALL_DIMS[i] = d end
 ALL_DIMS[21], ALL_DIMS[22], ALL_DIMS[23], ALL_DIMS[24] = "fire_res", "cold_res", "light_res", "chaos_res"
-
-local function now_ms()
-	if type(HostNowMs) == "function" then return HostNowMs() end
-	if type(GetTime) == "function" then return GetTime() end
-	return 0
-end
-
-local function get_build()
-	local m = main or __mainObject__
-	local b = m and m.modes and m.modes["BUILD"]
-	if not b then error("No active PoB build loaded", 0) end
-	if b.buildFlag and b.calcsTab and b.calcsTab.BuildOutput then
-		b.calcsTab:BuildOutput(); b.buildFlag = false
-	end
-	return b
-end
 
 local function primary_dps(out)
 	if (out.FullDPS or 0) > 0 then return out.FullDPS, "FullDPS" end
@@ -79,7 +65,6 @@ local function sum_item_attr_res(item, slot_num, mod_db)
 	return base_attr, inc_attr, base_res, base_res_max
 end
 
-local function json_obj(t) return setmetatable(t or {}, { __jsontype = "object" }) end
 local function make_set(csv)
 	local s = {}
 	for k in csv:gmatch("[^|]+") do s[k] = 1 end

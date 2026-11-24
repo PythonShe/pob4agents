@@ -518,6 +518,7 @@ def test_real_win_lua_host_win32_ffi_and_lazy_hooks(tmp_path: Path, monkeypatch:
     script = tmp_path / "verify_modules.lua"
     script.write_text(
         f"""
+package.path = {json.dumps((LUA_DIR / "?.lua").as_posix(), ensure_ascii=False)} .. ";" .. package.path
 local win32 = assert(loadfile({json.dumps((LUA_DIR / "win32_ffi.lua").as_posix(), ensure_ascii=False)}))()
 local lazy = assert(loadfile({json.dumps((LUA_DIR / "lazy_hooks.lua").as_posix(), ensure_ascii=False)}))()
 

@@ -2,17 +2,16 @@
 -- Usage: luajit headless_runner.lua <game_dir> <bridge_lua_path> (or via `pob _lua-host` on Windows)
 local ffi, bit = require("ffi"), require("bit")
 
-local function norm_path(p)
-	if not p or p == "" then return "." end
-	local s = p:gsub("\\", "/")
-	if s == "/" or s:match("^%a:/$") then return s end
-	return (s:gsub("/+$", ""))
-end
+local RUNNER_DIR = (_G.__POB_LUA_DIR or (((debug.getinfo(1, "S") or {}).source or ""):gsub("\\", "/")
+	:match("^@?(.*)/[^/]+$")) or "."):gsub("\\", "/")
+-- One shared helper module for every extension below (they require("pob_host")).
+local H = dofile(RUNNER_DIR .. "/pob_host.lua")
+package.loaded.pob_host = H
+local norm_path = H.norm_path
+RUNNER_DIR = norm_path(RUNNER_DIR)
 
 local GAME_DIR = norm_path(arg and arg[1] or ".")
 local BRIDGE_PATH = (arg and arg[2] or ""):gsub("\\", "/")
-local RUNNER_DIR = norm_path(_G.__POB_LUA_DIR or (((debug.getinfo(1, "S") and debug.getinfo(1, "S").source) or "")
-	:gsub("\\", "/"):match("^@?(.*)/[^/]+$") or "."))
 local IS_WIN, IS_OSX, IS_X64 = (ffi.os == "Windows"), (ffi.os == "OSX"), (ffi.arch == "x64")
 
 local RAW_STDOUT, RAW_STDERR = io.stdout, io.stderr
@@ -29,7 +28,7 @@ engine_root = norm_path(engine_root)
 
 package.path = table.concat({
 	GAME_DIR .. "/lua/?.lua", GAME_DIR .. "/lua/?/init.lua",
-	GAME_DIR .. "/?.lua", GAME_DIR .. "/?/init.lua", package.path or "",
+	GAME_DIR .. "/?.lua", GAME_DIR .. "/?/init.lua", package.path or "", RUNNER_DIR .. "/?.lua",
 }, ";")
 package.cpath = table.concat(IS_WIN
 	and { GAME_DIR .. "/?.dll", engine_root .. "/bin/?.dll", package.cpath or "" }
@@ -163,63 +162,12 @@ else
 
 	posix_chdir(GAME_DIR)
 
-	ffi.cdef[[
-		typedef struct z_stream_s {
-			const unsigned char *next_in; unsigned int avail_in; unsigned long total_in;
-			unsigned char *next_out; unsigned int avail_out; unsigned long total_out;
-			const char *msg; void *state; void *zalloc; void *zfree; void *opaque;
-			int data_type; unsigned long adler; unsigned long reserved;
-		} z_stream;
-		const char *zlibVersion(void);
-		int deflateInit2_(z_stream *s, int l, int m, int w, int ml, int st, const char *v, int sz);
-		int deflate(z_stream *s, int f); int deflateEnd(z_stream *s);
-		int inflateInit2_(z_stream *s, int w, const char *v, int sz);
-		int inflate(z_stream *s, int f); int inflateEnd(z_stream *s);
-	]]
 	local ZLIB
 	for _, nm in ipairs(IS_OSX and { "z", "/usr/lib/libz.dylib", "libz.dylib" } or { "z", "libz.so.1", "libz.so" }) do
 		local ok, lib = pcall(ffi.load, nm); if ok and lib then ZLIB = lib; break end
 	end
 	if not ZLIB then error("Unable to load system zlib library via LuaJIT FFI") end
-	local ZVER, ZSZ = ZLIB.zlibVersion(), ffi.sizeof("z_stream")
-
-	function Deflate(data, isGzip)
-		if type(data) ~= "string" then return nil, "Deflate: expected string" end
-		local s = ffi.new("z_stream")
-		local rc = ZLIB.deflateInit2_(s, -1, 8, isGzip and 31 or 15, 8, 0, ZVER, ZSZ)
-		if rc ~= 0 then return nil, "deflateInit2 failed: " .. tostring(rc) end
-		s.next_in, s.avail_in = ffi.cast("const unsigned char *", data), #data
-		local buf, out = ffi.new("unsigned char[?]", 65536), {}
-		while true do
-			s.next_out, s.avail_out = buf, 65536
-			rc = ZLIB.deflate(s, 4)
-			local n = 65536 - tonumber(s.avail_out)
-			if n > 0 then out[#out + 1] = ffi.string(buf, n) end
-			if rc == 1 then break elseif rc ~= 0 then ZLIB.deflateEnd(s); return nil, "deflate failed: " .. tostring(rc) end
-		end
-		ZLIB.deflateEnd(s); return table.concat(out)
-	end
-
-	-- wbits is internal: raw deflate is retried as on Windows (the Python guardrail accepts it)
-	function Inflate(data, wbits)
-		if type(data) ~= "string" then return nil, "Inflate: expected string" end
-		if #data == 0 then return "" end
-		local s = ffi.new("z_stream")
-		local rc = ZLIB.inflateInit2_(s, wbits or 47, ZVER, ZSZ)
-		if rc ~= 0 then return nil, "inflateInit2 failed: " .. tostring(rc) end
-		s.next_in, s.avail_in = ffi.cast("const unsigned char *", data), #data
-		local buf, out = ffi.new("unsigned char[?]", 65536), {}
-		while true do
-			s.next_out, s.avail_out = buf, 65536
-			rc = ZLIB.inflate(s, 0)
-			local n = 65536 - tonumber(s.avail_out)
-			if n > 0 then out[#out + 1] = ffi.string(buf, n) end
-			if rc == 1 then break elseif rc ~= 0 then ZLIB.inflateEnd(s)
-				if not wbits then return Inflate(data, -15) end; return nil, "inflate failed: " .. tostring(rc) end
-			if tonumber(s.avail_in) == 0 and n == 0 then ZLIB.inflateEnd(s); return nil, "inflate truncated input" end
-		end
-		ZLIB.inflateEnd(s); return table.concat(out)
-	end
+	Inflate, Deflate = H.zlib_codec(ZLIB)
 
 	local START_TV = ffi.new("pob_timeval_t"); ffi.C.gettimeofday(START_TV, nil)
 	function GetTime()

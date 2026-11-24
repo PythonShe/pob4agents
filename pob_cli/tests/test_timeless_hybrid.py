@@ -632,6 +632,7 @@ def test_update_timeless_meta_default_output_follows_tree_version(
 
 
 _MMAP_PROBE = """
+package.path = arg[1]:gsub("[^/\\\\]+$", "?.lua") .. ";" .. package.path
 local M = dofile(arg[1])
 data = {
     timelessJewelTypes = { "Glorious Vanity", "Lethal Pride", [7] = "Abyss Tecrod" },

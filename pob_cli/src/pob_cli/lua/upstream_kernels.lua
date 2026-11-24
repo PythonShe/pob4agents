@@ -5,16 +5,14 @@
 --   - M.rpc_handlers.trade_generate_query: synchronous TradeQueryGenerator coroutine driver
 
 local dkjson = require("dkjson")
+local H = require("pob_host")
+local json_obj, now_ms, get_build = H.json_obj, H.now_ms, H.get_build
 
 local M = {
 	_installed = false,
 	_cached_tqg = nil,
 	_stat_info = nil,
 }
-
-local function json_obj(t)
-	return setmetatable(t or {}, { __jsontype = "object" })
-end
 
 local PSEUDO_HASH_MAP = {
 	["3372524247"] = { "pseudo.pseudo_total_fire_resistance", "+#% total to Fire Resistance" },
@@ -25,29 +23,6 @@ local PSEUDO_HASH_MAP = {
 	["3261801346"] = { "pseudo.pseudo_total_dexterity", "+# total to Dexterity" },
 	["328541901"] = { "pseudo.pseudo_total_intelligence", "+# total to Intelligence" },
 }
-
-local function now_ms()
-	if type(HostNowMs) == "function" then
-		return HostNowMs()
-	end
-	if type(GetTime) == "function" then
-		return GetTime()
-	end
-	return 0
-end
-
-local function get_build()
-	local m = main or __mainObject__
-	local b = m and m.modes and m.modes["BUILD"]
-	if not b then
-		error("No active PoB build loaded", 0)
-	end
-	if b.buildFlag and b.calcsTab and b.calcsTab.BuildOutput then
-		b.calcsTab:BuildOutput()
-		b.buildFlag = false
-	end
-	return b
-end
 
 local function list_power_stat_names()
 	local names = {}
@@ -124,9 +99,8 @@ function M.install_post_bridge()
 	if M._installed then
 		return true
 	end
-	local m = main or __mainObject__
-	local b = m and m.modes and m.modes["BUILD"]
-	if b and b.calcsTab then
+	local b = get_build({ rebuild = false, optional = true })
+	if b then
 		wrap_calcs_power_builder(b.calcsTab)
 	end
 	M._installed = true
@@ -367,6 +341,8 @@ local function build_slot_constraints(build, slot_name)
 	local ok_p, probe = false, nil
 	if type(probe_fn) == "function" then
 		ok_p, probe = pcall(probe_fn, {})
+		-- The query still goes out without the slot's deficits; say why instead of dropping them.
+		if not ok_p and type(PobToolsLogError) == "function" then PobToolsLogError("agent_probe_build", probe) end
 	end
 	if ok_p and type(probe) == "table" then
 		for _, lb in ipairs(probe.loadBearingGear or {}) do
