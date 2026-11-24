@@ -443,6 +443,10 @@ class DaemonManager:
                 entry["hello"] = worker.hello_info
             if history.source_label:
                 entry["sourceLabel"] = history.source_label
+            restore_failed = getattr(worker, "restore_failed", None)
+            if restore_failed:
+                # The saved build could not be restored at boot: why, and the file it was put aside in.
+                entry["restoreFailed"] = restore_failed
         return entry
 
     def dispatch(self, action: str, params: dict[str, Any]) -> dict[str, Any]:

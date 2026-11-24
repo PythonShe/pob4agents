@@ -151,6 +151,17 @@ def test_hot_reload_keeps_slot_rev_and_history(tmp_path: Path, monkeypatch: pyte
     assert state is not None and state["rev"] == 3
 
 
+def test_status_reports_a_build_put_aside_at_boot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    eng = tmp_path / "eng"
+    (eng / "PoE1").mkdir(parents=True)
+    monkeypatch.setattr(daemon_mod, "BridgeWorker", _StubWorker)
+    mgr = daemon_mod.DaemonManager(pob_dir=eng, token="tok", runtime_dir=tmp_path / "rt", offline=True, skip_update_check=True)
+    assert "restoreFailed" not in mgr._slot_status_entry("main", mgr.main_worker)
+    failed = {"error": "Engine failed to parse treeVersion 3_99", "codeFile": "x.txt", "skipped": False, "ts": 1.0}
+    mgr.main_worker.restore_failed = failed  # type: ignore[attr-defined]
+    assert mgr._slot_status_entry("main", mgr.main_worker)["restoreFailed"] == failed
+
+
 def test_slot_history_survives_a_daemon_restart(tmp_path: Path) -> None:
     h = SlotHistory("boss", tmp_path)
     h.load_build("CODE_A", "https://pobb.in/abc")
