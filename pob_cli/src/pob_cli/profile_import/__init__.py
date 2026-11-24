@@ -125,14 +125,17 @@ def _import_english_bundle(
     bundle: dict[str, Any],
     *,
     source_hint: str,
-) -> tuple[str, dict[str, Any]]:
+) -> tuple[str, dict[str, Any], list[str]]:
     """Import an English character bundle via the host's `import_character_json` or pure-Python PoB XML.
 
-    A failed `import_character_json` (an older host, or PoB raising on the bundle) puts the
-    previous build back and takes the XML route, which needs nothing from the Lua host.
+    A failed `import_character_json` (an older host, or PoB raising on the bundle) falls through
+    to the XML route, which needs nothing from the Lua host; the previous build is put back (with
+    its file and name, through import_code "replace") only when that route fails too. Returns the
+    route, its result and an `importNotes` entry naming the Lua failure.
     """
+    lua_error: str | None = None
+    prev_code = getattr(worker, "last_good_code", None)
     if worker.caps.get("importCharacterJson"):
-        prev_code = getattr(worker, "last_good_code", None)
         try:
             res = worker.call(
                 "import_character_json",
@@ -147,19 +150,23 @@ def _import_english_bundle(
                 },
                 timeout=30.0,
             )
-            return "import_character_json", res
-        except Exception:
-            if prev_code:
-                try:
-                    worker.call("import_code", {"code": prev_code, "mode": "replace"}, timeout=15.0)
-                except Exception:
-                    pass
+            return "import_character_json", res, []
+        except Exception as exc:
+            lua_error = str(exc) or type(exc).__name__
 
-    xml_text = character_bundle_to_pob_xml(bundle, pob_root=getattr(worker, "pob_root", None))
-    validate_build_xml(xml_text, expected_game="poe1", source_hint=source_hint)
-    code = _xml_to_share_code(xml_text)
-    res = worker.call("import_code", {"code": code, "mode": "replace"})
-    return "pob_xml", res
+    notes = [f"角色 JSON 导入失败（{lua_error}），已改用 PoB XML 导入。"] if lua_error else []
+    try:
+        xml_text = character_bundle_to_pob_xml(bundle, pob_root=getattr(worker, "pob_root", None))
+        validate_build_xml(xml_text, expected_game="poe1", source_hint=source_hint)
+        res = worker.call("import_code", {"code": _xml_to_share_code(xml_text), "mode": "replace"})
+    except Exception:
+        if lua_error and prev_code:  # the failed Lua import left a half-imported character loaded
+            try:
+                worker.call("import_code", {"code": prev_code, "mode": "replace"}, timeout=15.0)
+            except Exception:
+                pass
+        raise
+    return "pob_xml", res, notes
 
 
 def load_official_profile_into_worker(
@@ -188,8 +195,8 @@ def load_official_profile_into_worker(
         cn_bundle = fetch_cn_character_bundle(resolved_acc, chosen, proxy=proxy)
         dictionary = Zh2EnDictionary.from_engine_dir(getattr(worker, "pob_root", None))
         en_bundle, translate_warnings = translate_cn_bundle(cn_bundle, dictionary)
-        via, res = _import_english_bundle(worker, en_bundle, source_hint=target.raw_source)
-        notes = [_BANDIT_PANTHEON_NOTE]
+        via, res, fallback_notes = _import_english_bundle(worker, en_bundle, source_hint=target.raw_source)
+        notes = [_BANDIT_PANTHEON_NOTE, *fallback_notes]
         if translate_warnings:
             notes.append(
                 f"国服本地 3.30 词库反译完成，有 {len(translate_warnings)} 条未命中词缀（详见下方 [CN-TRANSLATE-WARN]），建议核对或用 `pob config set --append-mods` 补齐。"
@@ -222,7 +229,8 @@ def load_official_profile_into_worker(
         proxy=proxy,
         use_cookie=used_cookie,
     )
-    via, res = _import_english_bundle(worker, bundle, source_hint=target.raw_source)
+    via, res, fallback_notes = _import_english_bundle(worker, bundle, source_hint=target.raw_source)
+    notes.extend(fallback_notes)
     return {
         "importMethod": f"official_profile_intl_{via}",
         "importResult": res,

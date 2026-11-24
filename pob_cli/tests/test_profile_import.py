@@ -573,12 +573,17 @@ def test_coderabbit_major_fixes_league_filter_shell_safe_proxy_cn_hash_viscera_a
     )
     assert 'name="Head"' in visc_xml and "+50 to maximum Life" in visc_xml
 
-    # 6. A failed import_character_json restores the previous build, then takes the XML route
+    # 6. A failed import_character_json takes the XML route and says why; the previous build is
+    # put back only when the XML route fails too
     class _FailingPosixWorker(_FakeWorker):
+        xml_fails = False
+
         def call(self, method: str, params: dict[str, Any] | None = None, timeout: float | None = None) -> dict[str, Any]:
             self.calls.append((method, dict(params or {})))
             if method == "import_character_json":
                 raise RuntimeError("boom during posix import")
+            if method == "import_code" and self.xml_fails and (params or {}).get("code") != "PREV_BUILD_CODE":
+                raise RuntimeError("xml import failed")
             return {"ok": True}
 
     fw = _FailingPosixWorker(caps={"importCharacterJson": True})
@@ -601,6 +606,18 @@ def test_coderabbit_major_fixes_league_filter_shell_safe_proxy_cn_hash_viscera_a
         char_name="HeroA",
     )
     assert res["importMethod"] == "official_profile_intl_pob_xml"
-    imports = [p.get("code") for m, p in fw.calls if m == "import_code"]
-    assert imports[0] == "PREV_BUILD_CODE"
-    assert len(imports) == 2 and imports[1] != "PREV_BUILD_CODE"
+    assert any("boom during posix import" in n for n in res["importNotes"])
+    imports = [(p.get("code"), p.get("mode")) for m, p in fw.calls if m == "import_code"]
+    assert len(imports) == 1 and imports[0][0] != "PREV_BUILD_CODE" and imports[0][1] == "replace"
+
+    fw2 = _FailingPosixWorker(caps={"importCharacterJson": True})
+    fw2.last_good_code = "PREV_BUILD_CODE"
+    fw2.xml_fails = True
+    with pytest.raises(RuntimeError, match="xml import failed"):
+        importers.load_build_into_worker(
+            fw2,
+            source="https://www.pathofexile.com/account/view-profile/alice-1234",
+            char_name="HeroA",
+        )
+    imports2 = [(p.get("code"), p.get("mode")) for m, p in fw2.calls if m == "import_code"]
+    assert imports2[-1] == ("PREV_BUILD_CODE", "replace")

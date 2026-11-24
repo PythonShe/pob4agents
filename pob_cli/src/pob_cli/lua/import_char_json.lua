@@ -21,12 +21,16 @@ return function(params, bridge_dispatcher)
 		error("import_character_json requires params.char object", 0)
 	end
 	-- A fresh build, as import_code "replace" gives the XML route: nothing of the previous
-	-- build (config, other sets, skill groups) survives into the imported character.
-	bridge_dispatcher("new_build", {})
+	-- build (config, other sets, skill groups) survives into the imported character, while its
+	-- file and name stay, so saving still writes where the previous build came from.
+	local prev = H.get_build({ optional = true, rebuild = false })
+	local file, name, sub = prev and prev.dbFileName, prev and prev.buildName, prev and prev.dbFileSubPath
+	bridge_dispatcher("new_build", { name = name })
 	local b = H.get_build({ optional = true })
 	if not b or not b.importTab then
 		error("PoB importTab is not available", 0)
 	end
+	if file then b.dbFileName, b.dbFileSubPath = file, sub end
 	local tab = b.importTab
 
 	local passive_data = params.passiveSkills

@@ -47,7 +47,9 @@ def test_import_character_json_lands_in_the_build(worker: BridgeWorker) -> None:
     # The host advertised importCharacterJson but read the build from `launch`, which has none.
     if not worker.caps.get("importCharacterJson"):
         pytest.skip("host has no import_character_json")
-    _load_example(worker)
+    worker.call("import_code", {"code": _example_code(), "mode": "new"})  # named "Imported build"
+    name_before = worker.call("get_build_info", {})["buildName"]
+    assert name_before != "Unnamed build"
     nodes = _example_nodes()
     ring = {
         "inventoryId": "Ring", "frameType": 2, "name": "Regression Loop", "typeLine": "Ruby Ring",
@@ -66,6 +68,7 @@ def test_import_character_json_lands_in_the_build(worker: BridgeWorker) -> None:
     assert res["imported"] is True
     info = worker.call("get_build_info", {})
     assert info["className"] == "Witch" and info["ascendClassName"] == "Occultist" and info["level"] == 91
+    assert info["buildName"] == name_before  # a fresh build, under the previous build's name and file
     # Cluster subgraph nodes need their jewels and masteries their effects; the rest is allocated.
     allocated = {int(n) for n in worker.call("get_tree_state", {})["allocatedNodes"]}
     assert allocated <= set(nodes) and len(allocated) >= 100
