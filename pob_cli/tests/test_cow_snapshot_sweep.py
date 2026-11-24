@@ -134,6 +134,8 @@ class _CowFakeWorker:
             if p.get("drop"):
                 self._cow_snaps.pop(sid, None)
             return {"ok": True}
+        if method == "pump":  # one engine frame; this fake's stats never go stale
+            return {}
         if method == "cow_drop":
             self._cow_snaps.pop(str(p["snapId"]), None)
             return {"ok": True}

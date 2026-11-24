@@ -122,6 +122,12 @@ class BuildTransaction:
             self.history.active = self.parent
             if self.parent is not None:
                 self.parent.stale = self.parent.stale or self.stale
+            elif self.stale:
+                # The next command reads get_stats, which does not settle a pending rebuild.
+                try:
+                    self.fresh()
+                except Exception:
+                    pass
             if not self._committed and getattr(self.worker, "last_good_code", None) is not None:
                 # Only this transaction's commit moves the restart code; one the bridge put aside
                 # after the engine rejected it (None) stays dropped.
@@ -153,7 +159,9 @@ class BuildTransaction:
         note = restore_snapshot(self.worker, target, drop=drop, rebuild=rebuild)
         if drop and target in self._nested:
             self._nested.remove(target)
-        self.stale = not rebuild and target.kind == "cow"
+        # cow_restore runs a frame only when it changed something, so a rebuilding restore that found
+        # nothing to undo leaves an earlier lazy restore's output stale; an import always runs one.
+        self.stale = target.kind == "cow" and (self.stale or not rebuild)
         if note:
             self.notes.append(note)
         return note

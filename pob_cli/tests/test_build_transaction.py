@@ -179,10 +179,11 @@ def test_slot_history_survives_a_daemon_restart(tmp_path: Path) -> None:
 
 
 class _FrameWorker(_CowFakeWorker):
-    """Fake whose `get_calcs` reads the output of the last engine frame, as PoB's calcs tab does.
+    """Fake whose `get_stats` and `get_calcs` read the output of the last engine frame, as PoB does.
 
-    Edits and rebuilding restores run a frame; `cow_restore{rebuild:false}` does not, and
-    `pump{seconds:0}` runs one.
+    Edits run a frame and `pump{seconds:0}` runs one. `cow_restore` runs one only when it changed
+    something and was not asked for `rebuild:false` (lua/fast_calc_cow.lua), so a restore that
+    finds the build already restored leaves an earlier lazy restore's output stale.
     """
 
     _FRAMES = frozenset({"set_config", "reset_config", "add_item", "import_code", "pump"})
@@ -197,14 +198,62 @@ class _FrameWorker(_CowFakeWorker):
             self.calls.append((method, p))
             row = {"label": "Total DPS", "cells": [{"raw": str(self.frame_dps)}]}
             return {"sections": [{"id": "Offence", "subsections": [{"label": "Main", "rows": [row]}]}]}
+        if method == "get_stats":
+            self.calls.append((method, p))
+            stats = self._stats_map()
+            stats["CombinedDPS"] = stats["TotalDPS"] = self.frame_dps
+            return {"stats": stats}
         if method == "pump":
             self.calls.append((method, p))
             res: dict[str, Any] = {}
         else:
+            before = self._serialize()
             res = super().call(method, params, timeout)
-        if method in self._FRAMES or (method == "cow_restore" and p.get("rebuild", True)):
+            if method == "cow_restore" and p.get("rebuild", True) and self._serialize() != before:
+                self.frame_dps = self.dps
+        if method in self._FRAMES:
             self.frame_dps = self.dps
         return res
+
+
+def test_rollback_after_a_lazy_restore_refreshes_calc_output() -> None:
+    w = _FrameWorker(caps=_CAPS)
+    res = run_sweep(
+        w,
+        [
+            {"name": "Power", "ops": [{"op": "config", "set": {"usePowerCharges": True}}]},
+            {"name": "Control", "ops": []},
+        ],
+    )
+    assert res["restoreCheck"]["verified"] is True
+    assert not res["restoreCheck"].get("fallback") and not res.get("restoreFallbacks")
+    assert [m for m, _ in w.calls].count("import_code") == 0
+    assert w.frame_dps == w.dps
+
+
+def test_error_after_a_lazy_restore_leaves_fresh_calc_output(monkeypatch: pytest.MonkeyPatch) -> None:
+    import pob_cli.mutators.batch_sweep as batch_sweep_mod
+    from pob_cli.errors import CrossGameHallucinationError
+
+    real = batch_sweep_mod._sweep_variant
+
+    def _guarded(worker: Any, tx: Any, var: dict[str, Any], v_name: str, *a: Any) -> dict[str, Any]:
+        if v_name == "PoE2 term":
+            raise CrossGameHallucinationError(trigger="x", error="PoE2 term in a PoE1 sweep", remediation="drop it")
+        return real(worker, tx, var, v_name, *a)
+
+    monkeypatch.setattr(batch_sweep_mod, "_sweep_variant", _guarded)
+    w = _FrameWorker(caps=_CAPS)
+    with pytest.raises(CrossGameHallucinationError):
+        run_sweep(
+            w,
+            [
+                {"name": "Power", "ops": [{"op": "config", "set": {"usePowerCharges": True}}]},
+                {"name": "PoE2 term", "ops": []},
+            ],
+        )
+    assert w.config_vars["usePowerCharges"] is False
+    assert w.frame_dps == w.dps  # the next `pob stats` reads the committed build's numbers
 
 
 def test_sweep_variant_after_lazy_restore_reads_fresh_calcs() -> None:
