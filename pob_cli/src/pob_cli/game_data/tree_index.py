@@ -330,13 +330,14 @@ def ensure_treedata_index(
     """Build (if missing/stale) and return `(db_path, tree_version)` for 0ms daemon-free passive tree queries."""
     rt_dir = resolve_runtime_dir(runtime_dir)
     resolved_pob = resolve_pob_dir(pob_dir, rt_dir)
-    poe1_dir, zh_dir = _resolve_poe1_data_dirs(resolved_pob)
+    poe1_dir, zh_dir = _resolve_poe1_data_dirs(resolved_pob, runtime_dir=rt_dir)
     tree_ver, tree_lua_path = _find_latest_tree_lua(poe1_dir)
 
     hasher = hashlib.blake2b(digest_size=4)
     st = tree_lua_path.stat()
     hasher.update(f"{tree_ver}:{st.st_size}:{st.st_mtime_ns};".encode())
     if zh_dir is not None and zh_dir.is_dir():
+        hasher.update(f"{zh_dir.name};".encode())
         for fn in (*_TREE_ZH_NAME_FILES, "tree_sd.json"):
             zp = zh_dir / fn
             if zp.is_file():

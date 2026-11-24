@@ -30,8 +30,8 @@ MIN_PASSED_TESTS = 905
 # no gate: the defaults follow the tier this machine is actually in, and `engine.yml` still passes
 # explicit counts so CI keeps an exact ratchet.
 MAX_SKIPPED_TESTS = 25  # engine plus the legacy PobTools seed: the strict tier
-_MAX_SKIPPED_BOOTSTRAPPED = 30  # engine from `pob bootstrap`: Windows keeps its POSIX-only skips
-_MAX_SKIPPED_NO_ENGINE = 65  # no engine at all: every real-engine test skips
+_MAX_SKIPPED_BOOTSTRAPPED = 32  # engine from `pob bootstrap`: Windows keeps POSIX-only + slim LUT skips
+_MAX_SKIPPED_NO_ENGINE = 85  # no engine at all: every real-engine test skips
 
 
 def _engine_tier(repo_root: Path) -> tuple[str, int]:
@@ -202,7 +202,7 @@ def run_self_test(pob_cli_root: Path) -> int:
             (
                 "blocked-rpc",
                 "blocked-rpc (save_build_as)",
-                pkg / "snapshot.py",
+                pkg / "snapshot" / "__init__.py",
                 '\n\ndef _selftest_blocked_rpc(worker: object) -> None:\n'
                 '    worker.call("save_build_as", {})  # type: ignore[attr-defined]\n',
             ),

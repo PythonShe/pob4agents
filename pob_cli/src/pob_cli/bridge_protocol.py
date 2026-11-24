@@ -41,6 +41,11 @@ FORBIDDEN_METHODS: dict[str, str] = {
 
 _TREE_VERSION_ATTR_RE = re.compile(r'treeVersion=["\']([^"\']+)["\']')
 _TREE_VERSION_NUM_RE = re.compile(r"^(\d+)_(\d+)")
+_FAILED_TREE_STAGE: dict[tuple[str, str], float] = {}
+_TREE_STAGE_RETRY_COOLDOWN_SEC = 60.0
+# Staging runs under the worker lock before `import_code` (15 s RPC timeout; the CLI waits 150 s).
+_TREE_STAGE_PER_VERSION_SEC = 8.0
+_TREE_STAGE_TOTAL_BUDGET_SEC = 12.0
 
 
 class BridgeError(RuntimeError):
@@ -94,13 +99,81 @@ def _get_local_tree_versions(game_dir: Path) -> tuple[set[str], tuple[int, int] 
     for entry in tree_data_dir.iterdir():
         if not entry.is_dir():
             continue
-        names.add(entry.name)
         parsed = _parse_tree_version_tuple(entry.name)
-        if parsed is not None:
-            if max_tuple is None or parsed > max_tuple:
-                max_tuple = parsed
-                max_str = f"{parsed[0]}_{parsed[1]}"
+        if parsed is not None and (max_tuple is None or parsed > max_tuple):
+            max_tuple = parsed
+            max_str = f"{parsed[0]}_{parsed[1]}"
+        if (entry / ".incomplete").exists() or not any(entry.iterdir()):
+            continue
+        names.add(entry.name)
     return names, max_tuple, max_str
+
+
+def _tree_stage_error(tv: str, missing: list[str], reason: str) -> BridgeError:
+    shown = ", ".join(missing[:3]) + (", ..." if len(missing) > 3 else "")
+    return BridgeError(
+        f"This build uses passive tree version '{tv}', whose data is not installed ({shown}), "
+        f"and it could not be fetched: {reason}. Run pob online (without --offline / "
+        "POB_OFFLINE=1; behind a proxy set POB_PROXY or HTTPS_PROXY) so it downloads the "
+        "tree on demand, or run `pob update` if the engine itself is damaged."
+    )
+
+
+def stage_missing_tree_versions(code: str, game_dir: Path) -> list[str]:
+    """Fetch the `TreeData/<ver>/` files a build needs that the slim engine left out.
+
+    A version counts as present only when every manifest file for it is there and verified.
+    All versions share one time budget below the import RPC's own timeout, and a version that
+    failed is not retried for a minute. Raises `BridgeError` with a fix-it hint when a needed
+    version cannot be installed, instead of letting PoB fail on a missing `tree.lua`.
+    """
+    if not (Path(game_dir) / "manifest.xml").is_file():
+        return []
+    xml_text = _decode_share_code_xml(code)
+    if not xml_text:
+        return []
+    requested = list(dict.fromkeys(_extract_xml_tree_versions(xml_text)))
+    if not requested:
+        return []
+    from .updater.constants import UpdateError
+    from .updater.remote import ensure_tree_data_files, missing_tree_data_files
+
+    gdir_key = str(Path(game_dir))
+    deadline = time.monotonic() + _TREE_STAGE_TOTAL_BUDGET_SEC
+    staged: list[str] = []
+    for tv in requested:
+        try:
+            missing = missing_tree_data_files(Path(game_dir), tv)
+        except (UpdateError, OSError, ValueError):
+            continue  # unknown or malformed version: PoB reports it itself
+        if not missing:
+            continue
+        if os.environ.get("POB_OFFLINE") == "1":
+            raise _tree_stage_error(tv, missing, "POB_OFFLINE=1 is set")
+        ckey = (gdir_key, tv)
+        last_fail = _FAILED_TREE_STAGE.get(ckey)
+        if last_fail is not None and (time.monotonic() - last_fail) < _TREE_STAGE_RETRY_COOLDOWN_SEC:
+            raise _tree_stage_error(tv, missing, "a download failed less than a minute ago")
+        remaining = deadline - time.monotonic()
+        if remaining < 1.0:
+            raise _tree_stage_error(tv, missing, "the download time budget ran out")
+        try:
+            ensure_tree_data_files(Path(game_dir), tv, timeout=min(_TREE_STAGE_PER_VERSION_SEC, remaining))
+        except Exception as exc:
+            _FAILED_TREE_STAGE[ckey] = time.monotonic()
+            raise _tree_stage_error(tv, missing, str(exc) or type(exc).__name__) from exc
+        _FAILED_TREE_STAGE.pop(ckey, None)
+        staged.append(tv)
+    return staged
+
+
+def stage_tree_versions_hint(code: str, game_dir: Path) -> str | None:
+    """`stage_missing_tree_versions`, returning its failure as a message for the caller."""
+    try:
+        stage_missing_tree_versions(code, game_dir)
+    except BridgeError as exc:
+        return str(exc)
+    return None
 
 
 def check_tree_version_mismatch(code: str, game_dir: Path, pob_version: str | None) -> str | None:
@@ -136,6 +209,20 @@ def validate_import_xml_guardrail(code: str) -> None:
         from .guardrails import validate_build_xml
 
         validate_build_xml(xml_text, expected_game="poe1")
+
+
+def parse_version_caps(ver_info: Any) -> dict[str, Any]:
+    """Extract capability flags from a `version` RPC result (always returns a dict)."""
+    if not isinstance(ver_info, dict):
+        return {}
+    raw = ver_info.get("caps")
+    return dict(raw) if isinstance(raw, dict) else {}
+
+
+def get_worker_caps(worker: Any) -> dict[str, Any]:
+    """Return a worker's parsed `version` RPC capability dict (defaulting to {} for FakeWorker)."""
+    raw = getattr(worker, "caps", None)
+    return dict(raw) if isinstance(raw, dict) else {}
 
 
 def validate_rpc_method(method: str, caps: dict[str, Any]) -> None:
@@ -407,3 +494,37 @@ def decode_batch_responses(
             results[idx] = res_dict
 
     return results, first_error, had_import_error
+
+
+def apply_worker_locale(worker: Any, norm: str) -> dict[str, Any]:
+    """Execute `set_locale` / `set_translate` on an unlocked running `BridgeWorker`."""
+    want_translate = norm != "en"
+    prev_locale = worker.locale
+    if not worker.is_running:
+        worker.locale = norm
+        return {"ok": True, "lang": norm, "translate": want_translate, "started": False}
+    try:
+        res = worker._raw_call_unlocked("set_locale", {"lang": norm}, timeout=5.0)
+        worker.locale = norm
+        return res
+    except BridgeError:
+        if norm != "zh-TW" and worker.caps.get("translateToggle", True):
+            tr_res = worker._raw_call_unlocked("set_translate", {"enabled": want_translate}, timeout=5.0)
+            worker.translate_enabled = bool(tr_res.get("enabled", want_translate))
+            worker.locale = norm
+            return {
+                "ok": True,
+                "lang": norm,
+                "translate": worker.translate_enabled,
+                "fallback": "set_translate",
+            }
+        if norm == prev_locale and want_translate == worker.translate_enabled:
+            return {"ok": True, "lang": norm, "translate": worker.translate_enabled, "fallback": "noop"}
+        return {
+            "ok": False,
+            "lang": prev_locale or "zh-CN",
+            "requestedLang": norm,
+            "translate": worker.translate_enabled,
+            "fallback": "unsupported",
+            "error": "Engine does not support runtime locale switching; restart worker to apply.",
+        }

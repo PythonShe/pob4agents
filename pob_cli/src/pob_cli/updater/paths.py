@@ -11,6 +11,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from ..locale_cfg import _has_runtime_data_l0
 from .constants import LEGACY_SEED_DIRS, LEGACY_SEED_FILES, UpdateError
 
 
@@ -35,15 +36,7 @@ def detect_source_checkout_root() -> Path | None:
 
 def _has_runtime_data(path: Path) -> bool:
     """Return True if ``path`` contains initialized pob runtime state (ignoring binary-only ``bin/``)."""
-    try:
-        if not path.is_dir():
-            return False
-        for marker in ("engine", "daemon.json", "update_state.json", "cache"):
-            if (path / marker).exists():
-                return True
-        return any(path.glob("slot_*.json"))
-    except OSError:
-        return False
+    return _has_runtime_data_l0(path)
 
 
 def get_default_runtime_dir() -> Path:
@@ -204,9 +197,29 @@ def build_engine_command(engine_dir: Path) -> tuple[list[str], dict[str, str]]:
         }
 
     if on_windows:
+        if (
+            (game_dir / "lua51.dll").is_file()
+            and (game_dir / "zlib1.dll").is_file()
+            and bridge_lua.is_file()
+        ):
+            if not runner_lua.is_file():
+                raise UpdateError(f"Bundled headless_runner.lua not found at {runner_lua}")
+            host_prefix = (
+                [sys.executable, "_lua-host"]
+                if getattr(sys, "frozen", False)
+                else [sys.executable, "-m", "pob_cli", "_lua-host"]
+            )
+            extra_env = {
+                "POB_ZH_HEADLESS": "1",
+                "POB_GAME": "poe1",
+                "POB_ENGINE_ROOT": str(eng),
+            }
+            return [*host_prefix, str(runner_lua), str(game_dir), str(bridge_lua)], extra_env
         exe_path = eng / "pob-zh.exe"
         if not exe_path.is_file():
-            raise UpdateError(f"pob-zh.exe not found at {exe_path}")
+            raise UpdateError(
+                f"Neither PoE1/lua51.dll+zlib1.dll (with Data/bridge/bridge.lua) nor legacy pob-zh.exe found under {eng}"
+            )
         return [str(exe_path), "--engine-headless", str(game_dir)], {}
 
     luajit_bin = resolve_luajit_binary(eng)
@@ -238,6 +251,14 @@ def is_valid_engine_dir(path: Path | None) -> bool:
     if not (p / "PoE1").is_dir():
         return False
     if _pkg().is_windows():
+        if (
+            (p / "PoE1" / "lua51.dll").is_file()
+            and (p / "PoE1" / "zlib1.dll").is_file()
+            and (p / "Data" / "bridge" / "bridge.lua").is_file()
+        ):
+            return True
+        if os.environ.get("POB_ENGINE_CMD", "").strip() and (p / "Data" / "bridge" / "bridge.lua").is_file():
+            return True
         return (p / "pob-zh.exe").is_file()
     if not (p / "Data" / "bridge" / "bridge.lua").is_file():
         return False
