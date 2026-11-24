@@ -8,9 +8,9 @@
 
 碰上不懂的还会去[编年史](https://poedb.tw)和[wiki](https://www.poewiki.net)，而不是和往常一样空口瞎编
 
-它会给你诸多优化建议，还能找找对你最有提升的装备，直接提供市集购买链接
+它会给你诸多优化建议，还能按构筑缺口去市集找对你最有提升的装备，直接提供购买链接
 
-甚至还能帮你找永恒珠宝！
+甚至几秒就能帮你搜完永恒珠宝（连 3.30 新的深渊永恒珠宝也支持）！
 
 ---
 
@@ -20,7 +20,7 @@
 
 > 我要安装 exilemoulei/pob4agents ，请帮我装好所有依赖
 
-以后出新版本不用重装，让agent帮你跑一下 `pob self-update` 就行
+以后出新版本不用重装，直接让 agent 帮你更新 pob4agents 和 Skill 就行
 
 ## 什么是agent？
 
@@ -33,6 +33,8 @@
 安装完成之后，新开对话窗，给它提供你的 poe.ninja / 国际服或国服官网角色链接 / pob导出链接，它都能认
 
 （国服看下面导入 Cookie 的方法。另外官网接口拿不到盗贼和万神殿，记得确认下）
+
+支持简体中文、繁体中文和英文——玩国际服繁体或者习惯看英文词条的，直接跟 agent 说“帮我切繁体 / 切英文”就行
 
 尽量选择聪明点的模型（推荐Neon/Opus/Sol），不过你只有大肥鱼也没关系
 
@@ -68,11 +70,13 @@
 
 ## 致谢与开源协议
 
-- **上游与灵感**：[**ianderse/pob-mcp**](https://github.com/ianderse/pob-mcp)（GPL-3.0）、[**shalayiding/POEMCP**](https://github.com/shalayiding/POEMCP)、[**Hsiung-Shao/PobTools-zh**](https://github.com/Hsiung-Shao/PobTools-zh)（中文无头引擎）、[**PathOfBuildingCommunity/PathOfBuilding**](https://github.com/PathOfBuildingCommunity/PathOfBuilding)。
+- **上游与灵感**：[**ianderse/pob-mcp**](https://github.com/ianderse/pob-mcp)（GPL-3.0）、[**shalayiding/POEMCP**](https://github.com/shalayiding/POEMCP)、[**Hsiung-Shao/PobTools-zh**](https://github.com/Hsiung-Shao/PobTools-zh)（中文化词库与早期无头桥接）、[**PathOfBuildingCommunity/PathOfBuilding**](https://github.com/PathOfBuildingCommunity/PathOfBuilding)。
 - **社区贡献**：
   - [**@ChangMenQAQ**](https://github.com/ChangMenQAQ)（[PR #1](https://github.com/exilemoulei/pob4agents/pull/1)）：官方交易搜索、丰收同阶转抗与工艺台词缀方案。
   - [**@restartgr**](https://github.com/restartgr)（[PR #2](https://github.com/exilemoulei/pob4agents/pull/2)、[PR #4](https://github.com/exilemoulei/pob4agents/pull/4)、[PR #6](https://github.com/exilemoulei/pob4agents/pull/6)）：面板“去水”分析、`--keep` 条件保留、构筑恢复校验、错误退出码与中英文文档润色。
-  - [**@Capoouo**](https://github.com/Capoouo)（[PR #3](https://github.com/exilemoulei/pob4agents/pull/3)）：永恒珠宝种子搜索与候选种子筛选。
+  - [**@Capoouo**](https://github.com/Capoouo)（[PR #3](https://github.com/exilemoulei/pob4agents/pull/3)、[PR #30](https://github.com/exilemoulei/pob4agents/pull/30)）：永恒珠宝种子搜索、候选筛选及繁体中文输入等审计修复。
+  - [**@PythonShe**](https://github.com/PythonShe)（[PR #23](https://github.com/exilemoulei/pob4agents/pull/23)、[PR #24](https://github.com/exilemoulei/pob4agents/pull/24)、[PR #26](https://github.com/exilemoulei/pob4agents/pull/26)–[#29](https://github.com/exilemoulei/pob4agents/pull/29)）：macOS / Linux 独立构建与签名安装脚本、PyPI 发版、`pob self-update` 与发版签名加固。
+  - [**@luyahan**](https://github.com/luyahan)（[PR #31](https://github.com/exilemoulei/pob4agents/pull/31)）：公共基础模块重构与去重。
 - **参与贡献**：请先读 [CONTRIBUTING.md](CONTRIBUTING.md)。
 - **开源协议**：**GNU General Public License v3.0（GPL-3.0）**，详见 [LICENSE](LICENSE)。
 
@@ -93,9 +97,9 @@
   curl -fsSL https://raw.githubusercontent.com/exilemoulei/pob4agents/main/install.sh | bash
   ```
 
-两个安装脚本都会自动校验发布的 Ed25519 签名与 SHA256。若直连 GitHub 失败，先询问用户本地代理地址并设置 `POB_PROXY`（如 `http://127.0.0.1:<端口>`）或 `POB_GITHUB_MIRROR` 后重试。后续升级直接运行 `pob self-update`。
+两个安装脚本都会自动校验发布的 Ed25519 签名与 SHA256。若直连 GitHub 失败，先询问用户本地代理地址并设置 `POB_PROXY`（如 `http://127.0.0.1:<端口>`）或 `POB_GITHUB_MIRROR` 后重试。后续升级直接运行 `pob self-update`（跨版本升级时请同步更新下方的 `skills/pob` 和 `hooks/`）。
 
-### 2. 初始化本地 PoB 引擎
+### 2. 初始化本地 PoB 引擎与语言
 
 ```powershell
 pob bootstrap
@@ -104,7 +108,7 @@ pob status
 
 - 需代理时加 `--proxy http://127.0.0.1:<端口>`；若本机已有 `PobTools` 目录，可用 `pob bootstrap --from-dir "<本地路径>"` 离线导入。
 - Windows 采用精简原生 LuaJIT 托管引擎（无需 `pob-zh.exe` 或数百 MB 永恒珠宝 LUT 压缩包），macOS / Linux 独立版会自动使用内置或经 Ed25519 校验下载的预编译 LuaJIT 运行时，无需手动编译。
-- 默认显示语言为简体中文（`zh-CN`），国际服/台服繁体玩家可运行 `pob lang zh-TW`（或设置环境变量 `POB_LANG=zh-TW`）切换为固定繁体中文（支持简繁双词库离线秒切与互查；引擎未带的语言会被拒绝）。
+- 默认显示语言为简体中文（`zh-CN`）。请按用户语言顺手切换：繁体用户运行 `pob lang zh-TW`，英文用户运行 `pob lang en`（支持简繁英离线秒切，也可用 `POB_LANG` 覆盖；引擎未带的语言会被拒绝）。
 - 确认 `pob status` 返回版本与引擎就绪状态后再进入下一步。
 
 ### 3. 挂载 Skill（必做，不可跳过）
@@ -159,7 +163,7 @@ pob status
 
 ### 常用排障环境变量与仓库文档
 
-- 常用环境变量：`POB_PROXY`（网络代理）、`POB_GITHUB_MIRROR`（GitHub 镜像前缀，替换文件时仍校验哈希/签名）、`POB_OFFLINE=1`（跳过更新检查）、`POESESSID`（国际服交易/私密资料）、`POE_CN_SESSID`（国服官网角色）。
+- 常用环境变量：`POB_LANG`（显示语言：`zh-CN` / `zh-TW` / `en`）、`POB_PROXY`（网络代理）、`POB_GITHUB_MIRROR`（GitHub 镜像前缀，替换文件时仍校验哈希/签名）、`POB_OFFLINE=1`（跳过更新检查）、`POESESSID`（国际服交易/私密资料）、`POE_CN_SESSID`（国服官网角色）。
 - 文档总目录：[`docs/README.md`](docs/README.md)
 - 全部子命令与参数：[`docs/guides/commands.md`](docs/guides/commands.md)
 - 交易搜索与工艺台细则：[`docs/guides/trade.md`](docs/guides/trade.md)

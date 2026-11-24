@@ -8,7 +8,7 @@ Just import your build through a normal chat and let your agent actually run it 
 
 When it runs into a mechanic it isn't sure about, it checks [PoEDB](https://poedb.tw) and [PoE Wiki](https://www.poewiki.net) instead of making things up.
 
-It gives real upgrade suggestions, searches trade for the biggest actual upgrades with direct trade links, and can even hunt Timeless Jewel seeds for you!
+It gives real upgrade suggestions, automatically builds trade queries around your build's gaps with direct trade links, and hunts Timeless Jewel seeds (including 3.30 Abyss jewels) in seconds!
 
 ---
 
@@ -18,7 +18,7 @@ Just tell your agent:
 
 > I want to install exilemoulei/pob4agents, please install it along with all required dependencies.
 
-When new versions come out, there's no need to reinstall — just ask your agent to run `pob self-update`.
+When new versions come out, there's no need to reinstall — just tell your agent to update `pob4agents` and its Skill.
 
 ## What is an agent?
 
@@ -31,6 +31,8 @@ If you've never used one before, search YouTube for a quick setup tutorial.
 Once installed, open a fresh chat and drop in your `poe.ninja` link, official PoE profile link, or PoB export link/code — it recognizes all of them.
 
 (Note that the official profile API doesn't include Bandits or Pantheon, so double-check those with your agent after importing.)
+
+English, Traditional Chinese, and Simplified Chinese are all supported — if you ever see Chinese output, just tell your agent to switch `pob` to English.
 
 Pick a smarter model if you can (e.g. Claude Opus / Gemini Neon / GPT Sol), though lighter models like DeepSeek work fine too.
 
@@ -63,11 +65,13 @@ Paste it directly to your agent and ask it to save it to your local `POESESSID` 
 
 ## Credits and License
 
-- **Upstream & Inspiration**: [**ianderse/pob-mcp**](https://github.com/ianderse/pob-mcp) (GPL-3.0), [**shalayiding/POEMCP**](https://github.com/shalayiding/POEMCP), [**Hsiung-Shao/PobTools-zh**](https://github.com/Hsiung-Shao/PobTools-zh) (Chinese headless engine), and [**PathOfBuildingCommunity/PathOfBuilding**](https://github.com/PathOfBuildingCommunity/PathOfBuilding).
+- **Upstream & Inspiration**: [**ianderse/pob-mcp**](https://github.com/ianderse/pob-mcp) (GPL-3.0), [**shalayiding/POEMCP**](https://github.com/shalayiding/POEMCP), [**Hsiung-Shao/PobTools-zh**](https://github.com/Hsiung-Shao/PobTools-zh) (Chinese translation data & early headless bridge), and [**PathOfBuildingCommunity/PathOfBuilding**](https://github.com/PathOfBuildingCommunity/PathOfBuilding).
 - **Community Contributors**:
   - [**@ChangMenQAQ**](https://github.com/ChangMenQAQ) ([PR #1](https://github.com/exilemoulei/pob4agents/pull/1)): official trade search, Harvest resistance swap, and crafting bench evaluation.
   - [**@restartgr**](https://github.com/restartgr) ([PR #2](https://github.com/exilemoulei/pob4agents/pull/2), [PR #4](https://github.com/exilemoulei/pob4agents/pull/4), [PR #6](https://github.com/exilemoulei/pob4agents/pull/6)): PoB inflation audit, `--keep` condition retention, restore verification, exit codes, and bilingual doc polish.
-  - [**@Capoouo**](https://github.com/Capoouo) ([PR #3](https://github.com/exilemoulei/pob4agents/pull/3)): Timeless Jewel seed search and candidate prefiltering.
+  - [**@Capoouo**](https://github.com/Capoouo) ([PR #3](https://github.com/exilemoulei/pob4agents/pull/3), [PR #30](https://github.com/exilemoulei/pob4agents/pull/30)): Timeless Jewel seed search, candidate prefiltering, and audit / Traditional Chinese input fixes.
+  - [**@PythonShe**](https://github.com/PythonShe) ([PR #23](https://github.com/exilemoulei/pob4agents/pull/23), [PR #24](https://github.com/exilemoulei/pob4agents/pull/24), [PR #26](https://github.com/exilemoulei/pob4agents/pull/26)–[#29](https://github.com/exilemoulei/pob4agents/pull/29)): standalone macOS/Linux builds and signed `install.sh`, PyPI publishing, `pob self-update`, and release signing hardening.
+  - [**@luyahan**](https://github.com/luyahan) ([PR #31](https://github.com/exilemoulei/pob4agents/pull/31)): shared helper module deduplication and refactoring.
 - **Contributing**: please read [CONTRIBUTING.md](CONTRIBUTING.md) first.
 - **License**: **GNU General Public License v3.0 (GPL-3.0)** — see [LICENSE](LICENSE).
 
@@ -88,18 +92,19 @@ When a user asks you to install `exilemoulei/pob4agents`, **complete all 5 steps
   curl -fsSL https://raw.githubusercontent.com/exilemoulei/pob4agents/main/install.sh | bash
   ```
 
-Both installers verify the release's Ed25519 signature and SHA-256 checksums automatically. If direct GitHub access fails, ask the user for their proxy URL and set `POB_PROXY` (e.g. `http://127.0.0.1:<port>`) or `POB_GITHUB_MIRROR` before retrying. For future updates, run `pob self-update`.
+Both installers verify the release's Ed25519 signature and SHA-256 checksums automatically. If direct GitHub access fails, ask the user for their proxy URL and set `POB_PROXY` (e.g. `http://127.0.0.1:<port>`) or `POB_GITHUB_MIRROR` before retrying. For future updates, run `pob self-update` (and refresh `skills/pob` and `hooks/` from this repo on minor/major upgrades).
 
-### 2. Bootstrap the Local PoB Engine
+### 2. Bootstrap the Local PoB Engine & Language
 
 ```powershell
 pob bootstrap
+pob lang en
 pob status
 ```
 
-- Pass `--proxy http://127.0.0.1:<port>` if a proxy is needed, or `pob bootstrap --from-dir "<local-path>"` to seed from an existing `PobTools` folder.
+- Pass `--proxy http://127.0.0.1:<port>` if a proxy is needed, `--no-zh` for an English-only engine without Chinese dictionaries, or `--from-dir "<local-path>"` to seed from an existing `PobTools` folder.
 - Windows uses a slim native LuaJIT engine host (zero `pob-zh.exe`, zero bulky Timeless `.zip*` LUT downloads); macOS and Linux standalone builds automatically use the bundled or Ed25519-verified prebuilt LuaJIT runtime — no manual compilation needed.
-- Display language defaults to Simplified Chinese (`zh-CN`); run `pob lang zh-TW` (or `pob lang en`, or set `POB_LANG`) to switch to fixed Traditional Chinese or English with instant hot-reload (only locales the engine ships are accepted).
+- `pob` defaults to Simplified Chinese (`zh-CN`), so **run `pob lang en` for English users** (or `pob lang zh-TW` for Traditional Chinese; `POB_LANG` overrides with instant hot-reload).
 - Verify that `pob status` reports the version and a ready engine before continuing.
 
 ### 3. Install the Skill (Mandatory — Do Not Skip)
@@ -153,7 +158,7 @@ If the current client does not support these hook formats, inform the user clear
 
 ### Troubleshooting Env Vars & Repository Docs
 
-- Common env vars: `POB_PROXY` (network proxy), `POB_GITHUB_MIRROR` (GitHub mirror prefix; file replacements still verify hashes/signatures), `POB_OFFLINE=1` (skip update checks), `POESESSID` (trade / private profile).
+- Common env vars: `POB_LANG` (display language: `en` / `zh-CN` / `zh-TW`), `POB_PROXY` (network proxy), `POB_GITHUB_MIRROR` (GitHub mirror prefix; file replacements still verify hashes/signatures), `POB_OFFLINE=1` (skip update checks), `POESESSID` (trade / private profile).
 - Documentation index: [`docs/README.md`](docs/README.md)
 - Full CLI command reference: [`docs/guides/commands.md`](docs/guides/commands.md)
 - Trade search & crafting bench guide: [`docs/guides/trade.md`](docs/guides/trade.md)
