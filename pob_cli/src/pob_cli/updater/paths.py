@@ -134,12 +134,11 @@ def get_bundled_headless_runner_path() -> Path:
 
 
 def resolve_luajit_binary(engine_dir: Path | None = None) -> Path | None:
-    """Locate a runnable LuaJIT binary for macOS/Linux headless mode.
+    """Locate the LuaJIT binary for macOS/Linux headless mode, or None.
 
-    Priority:
-      1. `POB_LUAJIT` environment variable (explicit override).
-      2. Managed `<engine_dir>/bin/luajit` (built/downloaded by `pob bootstrap`).
-      3. `luajit` on `PATH`.
+    Only `POB_LUAJIT` (an explicit override) or the managed `<engine_dir>/bin/luajit` that
+    `pob bootstrap` installs and self-tests. Never a `luajit` found on `PATH`: stock LuaJIT lacks
+    the `+=` / `..=` syntax PoB >= 2.68 uses, so an engine without `bin/luajit` is not runnable.
     """
     env_lj = os.environ.get("POB_LUAJIT", "").strip()
     if env_lj:
@@ -155,10 +154,6 @@ def resolve_luajit_binary(engine_dir: Path | None = None) -> Path | None:
         managed = Path(engine_dir) / "bin" / "luajit"
         if managed.is_file():
             return managed
-
-    which_lj = shutil.which("luajit")
-    if which_lj:
-        return Path(which_lj)
     return None
 
 
@@ -225,8 +220,8 @@ def build_engine_command(engine_dir: Path) -> tuple[list[str], dict[str, str]]:
     luajit_bin = resolve_luajit_binary(eng)
     if luajit_bin is None:
         raise UpdateError(
-            f"No compatible LuaJIT runtime found for macOS/Linux (checked {eng / 'bin' / 'luajit'} and PATH). "
-            "Run `pob bootstrap` to install/build the native POSIX LuaJIT runtime."
+            f"No PoB LuaJIT runtime at {eng / 'bin' / 'luajit'} (a stock `luajit` cannot run PoB >= 2.68). "
+            "Run `pob bootstrap` to install/build the native POSIX LuaJIT runtime, or set POB_LUAJIT."
         )
     if not bridge_lua.is_file():
         raise UpdateError(

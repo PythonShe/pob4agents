@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
 import sys
@@ -312,6 +313,10 @@ def _stage_incremental_updates(
                     only_prefixes=POBTOOLS_DATA_ONLY_PREFIXES,
                 )
             )
+    if not _pkg().is_windows():
+        # Best effort: a runtime stamped with an older pin is refreshed along with an update, never blocks it.
+        with contextlib.suppress(Exception):  # staging_dir is <engine>/.staging
+            staged_files.update(_pkg().ensure_posix_runtime(staging_dir.parent, staging_dir, proxy=proxy, mirror=mirror))
     return staged_files
 
 
