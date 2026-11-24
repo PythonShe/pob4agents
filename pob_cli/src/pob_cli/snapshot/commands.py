@@ -8,6 +8,7 @@ from typing import Any
 from ..bridge_client import BridgeWorker
 from ..errors import DaemonRequestError
 from .digest import capture_digest, diff_digest
+from .history import history_of
 from .transaction import BuildScope, BuildTransaction
 
 
@@ -66,10 +67,17 @@ def run_mutation(
 
 
 def _step_history(worker: BridgeWorker, *, action: str) -> dict[str, Any]:
+    with worker.lock:
+        history = history_of(worker)
+        if not (history.undo if action == "undo" else history.redo):
+            # Refused before a checkpoint, so there is nothing to roll back.
+            raise DaemonRequestError(f"{action.capitalize()} stack is empty.")
+        return _load_step(worker, action)
+
+
+def _load_step(worker: BridgeWorker, action: str) -> dict[str, Any]:
     with BuildTransaction(worker, scope=BuildScope.REPLACES_BUILD, will_commit=True) as tx:
         src_stack = tx.history.undo if action == "undo" else tx.history.redo
-        if not src_stack:
-            raise DaemonRequestError(f"{action.capitalize()} stack is empty.")
         digest_before = capture_digest(worker)
         # The history moves only once the engine has loaded the step: a failed import leaves both stacks as they were.
         worker.call("import_code", {"code": src_stack[-1], "mode": "replace"})

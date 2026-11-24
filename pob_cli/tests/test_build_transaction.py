@@ -90,6 +90,55 @@ def test_undo_and_redo_on_empty_stacks_are_request_errors() -> None:
     with pytest.raises(DaemonRequestError, match="Redo stack is empty"):
         redo_build(w)
     assert history_of(w).rev == 0
+    assert w.calls == []  # refused before the engine is touched: no rollback import
+
+
+class _CountingWorker(_CowFakeWorker):
+    """Fake that counts the requests it was sent, as `BridgeWorker._req_counter` does."""
+
+    def __init__(self, **kw: Any) -> None:
+        super().__init__(**kw)
+        self._req_counter = 0
+
+    def call(self, method: str, params: dict[str, Any] | None = None, timeout: float | None = None) -> dict[str, Any]:
+        self._req_counter += 1
+        return super().call(method, params, timeout)
+
+
+@pytest.mark.parametrize(
+    ("source", "error"),
+    [("https://poe.ninja/poe2/builds/char/a/b", DaemonRequestError), (None, ValueError)],
+    ids=["poe2-url", "no-source"],
+)
+def test_load_refused_before_the_engine_does_not_reimport(source: str | None, error: type[Exception]) -> None:
+    w = _CountingWorker(caps=_CAPS)
+    with pytest.raises(error):
+        load_build(w, source=source)
+    assert [m for m, _ in w.calls] == []
+
+
+def test_load_that_reached_the_engine_still_rolls_back() -> None:
+    w = _CountingWorker(caps=_CAPS)
+    orig = w._serialize()
+    w.dps = 1.0  # what a failing profile import might leave behind
+    w.call("set_config", {"var": "usePowerCharges", "value": False})
+    w.last_good_code = orig
+    history_of(w).committed = orig
+
+    def _boom(worker: Any, **_kw: Any) -> dict[str, Any]:
+        worker.call("set_config", {"var": "usePowerCharges", "value": True})
+        raise BridgeError("profile import failed half way")
+
+    import pob_cli.importers as importers_mod
+
+    real = importers_mod.load_build_into_worker
+    importers_mod.load_build_into_worker = _boom  # type: ignore[assignment]
+    try:
+        with pytest.raises(BridgeError):
+            load_build(w, source="https://www.pathofexile.com/account/view-profile/x/characters")
+    finally:
+        importers_mod.load_build_into_worker = real
+    assert w._serialize() == orig
 
 
 # ---------------------------------------------------------------------------

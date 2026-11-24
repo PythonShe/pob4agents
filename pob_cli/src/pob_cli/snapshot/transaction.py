@@ -64,6 +64,7 @@ class BuildTransaction:
         self.notes: list[str] = []
         self._nested: list[BuildSnapshot] = []
         self._entry_code: str | None = None
+        self._sent_at: int | None = None
         self._closed = False
         self._committed = False
         self._lock: Any = None
@@ -103,6 +104,7 @@ class BuildTransaction:
             else:
                 self.base = take_snapshot(self.worker, prefer_cow=self.use_cow, fresh_fallback=True, code=known)
                 self.before_code = known or (self.base.token if self.base.kind == "code" else self.base.fallback_code)
+            self._sent_at = self._requests_sent()
             self.history.active = self
         except BaseException as exc:
             self._lock.__exit__(type(exc), exc, exc.__traceback__)
@@ -192,8 +194,19 @@ class BuildTransaction:
         while self._nested:
             drop_snapshot(self.worker, self._nested.pop())
 
+    def _requests_sent(self) -> int | None:
+        count = getattr(self.worker, "_req_counter", None)
+        return count if isinstance(count, int) else None
+
     def rollback(self) -> str | None:
-        """Restore the base checkpoint (rebuilding calc output) and end the transaction."""
+        """Restore the base checkpoint (rebuilding calc output) and end the transaction.
+
+        When the worker counts its requests and none was sent since the checkpoint (a load refused
+        by a guardrail or a failed download), the build is untouched and nothing is restored.
+        """
+        if self._sent_at is not None and self._requests_sent() == self._sent_at and not self._nested:
+            self.release()
+            return None
         self._closed = True
         self._drop_nested()
         return self.restore(drop=True) if self.base is not None else None
