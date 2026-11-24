@@ -361,6 +361,17 @@ def test_capture_digest_inside_a_transaction_refreshes_a_lazy_restore() -> None:
         tx.rollback()
 
 
+
+def test_exit_skips_the_refresh_frame_when_the_engine_is_down() -> None:
+    w = _FrameWorker(caps=_CAPS)
+    with BuildTransaction(w) as tx:
+        w.call("set_config", {"var": "usePowerCharges", "value": True})
+        tx.restore(rebuild=False)
+        assert tx.stale
+        # A crash that recovery gave up on: a pump would only relaunch it under the lock.
+        w.is_running = False
+    assert "pump" not in [m for m, _ in w.calls]
+
 # ---------------------------------------------------------------------------
 # Bug d: what-if and matrix repair a CoW restore that drifted
 # ---------------------------------------------------------------------------

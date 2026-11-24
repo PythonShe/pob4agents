@@ -124,8 +124,10 @@ class BuildTransaction:
             self.history.active = self.parent
             if self.parent is not None:
                 self.parent.stale = self.parent.stale or self.stale
-            elif self.stale:
-                # The next command reads get_stats, which does not settle a pending rebuild.
+            elif self.stale and getattr(self.worker, "is_running", True):
+                # The next command reads get_stats, which does not settle a pending rebuild. A
+                # stopped engine is skipped: pumping would relaunch it under the lock, and a
+                # restart re-imports the build with fresh output anyway.
                 try:
                     self.fresh()
                 except Exception:
