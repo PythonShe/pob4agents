@@ -75,7 +75,6 @@
   - [**@ChangMenQAQ**](https://github.com/ChangMenQAQ)（[PR #1](https://github.com/exilemoulei/pob4agents/pull/1)）：官方交易搜索、丰收同阶转抗与工艺台词缀方案。
   - [**@restartgr**](https://github.com/restartgr)（[PR #2](https://github.com/exilemoulei/pob4agents/pull/2)、[PR #4](https://github.com/exilemoulei/pob4agents/pull/4)、[PR #6](https://github.com/exilemoulei/pob4agents/pull/6)）：面板“去水”分析、`--keep` 条件保留、构筑恢复校验、错误退出码与中英文文档润色。
   - [**@Capoouo**](https://github.com/Capoouo)（[PR #3](https://github.com/exilemoulei/pob4agents/pull/3)、[PR #30](https://github.com/exilemoulei/pob4agents/pull/30)）：永恒珠宝种子搜索、候选筛选及繁体中文输入等审计修复。
-  - [**@PythonShe**](https://github.com/PythonShe)（[PR #23](https://github.com/exilemoulei/pob4agents/pull/23)、[PR #24](https://github.com/exilemoulei/pob4agents/pull/24)、[PR #26](https://github.com/exilemoulei/pob4agents/pull/26)–[#29](https://github.com/exilemoulei/pob4agents/pull/29)）：macOS / Linux 独立构建与签名安装脚本、PyPI 发版、`pob self-update` 与发版签名加固。
   - [**@luyahan**](https://github.com/luyahan)（[PR #31](https://github.com/exilemoulei/pob4agents/pull/31)）：公共基础模块重构与去重。
 - **参与贡献**：请先读 [CONTRIBUTING.md](CONTRIBUTING.md)。
 - **开源协议**：**GNU General Public License v3.0（GPL-3.0）**，详见 [LICENSE](LICENSE)。
