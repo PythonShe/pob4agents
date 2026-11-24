@@ -553,3 +553,24 @@ def test_live_failed_undo_import_keeps_history(live_worker: BridgeWorker) -> Non
         hist.redo.clear()
     assert hist.committed == committed
     assert live_worker.call("export_code", {})["code"] == committed
+
+
+def _add_minion_main_group(w: BridgeWorker) -> None:
+    w.call("add_group", {"label": "Probe minions"})
+    w.call("add_gem", {"group": 2, "nameSpec": "Summon Skeletons", "level": 20, "quality": 0, "enabled": True})
+    w.call("set_build_field", {"field": "mainSocketGroup", "value": 2})
+
+
+def test_live_cow_restore_brings_back_the_exact_stat_key_set(live_worker: BridgeWorker) -> None:
+    # The verifier compares the union of stat keys, so a restore must not leave keys an edit added or removed.
+    before = set(live_worker.call("get_stats", {})["stats"])
+    before_direct = set(live_worker.call("direct_calc", {})["stats"])
+    sid = live_worker.call("cow_snapshot", {})["snapId"]
+    _add_minion_main_group(live_worker)
+    assert set(live_worker.call("get_stats", {})["stats"]) != before
+    live_worker.call("cow_restore", {"snapId": sid, "drop": True})
+    assert set(live_worker.call("get_stats", {})["stats"]) == before
+    assert set(live_worker.call("direct_calc", {})["stats"]) == before_direct
+
+    res = run_mutation(live_worker, _add_minion_main_group, apply=False)
+    assert "restoreFallback" not in res
