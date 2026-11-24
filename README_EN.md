@@ -2,6 +2,11 @@
 
 [简体中文](README.md) | **English**
 
+[![Discord](https://img.shields.io/badge/Discord-Join%20Server-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/tejgNrhjn)
+
+> [!TIP]
+> **Questions or feedback?** Drop by our [Discord server](https://discord.gg/tejgNrhjn) anytime!
+
 `pob4agents` is a [**PathOfBuilding**](https://github.com/PathOfBuildingCommunity/PathOfBuilding) toolkit built specifically for AI agents.
 
 Just import your build through a normal chat and let your agent actually run it through PoB.

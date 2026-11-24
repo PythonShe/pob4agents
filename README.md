@@ -2,6 +2,12 @@
 
 **简体中文** | [English](README_EN.md)
 
+[![Discord](https://img.shields.io/badge/Discord-%E5%8A%A0%E5%85%A5%E7%A4%BE%E7%BE%A4-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/tejgNrhjn)
+![QQ群](https://img.shields.io/badge/QQ%E7%BE%A4-1062048472-12B7F5?style=flat-square&logo=qq&logoColor=white)
+
+> [!TIP]
+> **有问题随时来反馈！** QQ 群：`1062048472` ｜ [加入 Discord 社群](https://discord.gg/tejgNrhjn)
+
 `pob4agents` 是专为AI打造的 [**PathOfBuilding**](https://github.com/PathOfBuildingCommunity/PathOfBuilding) 工具
 
 玩家只要通过与AI agents对话导入构筑，就能让agent真的帮你跑一遍pob
