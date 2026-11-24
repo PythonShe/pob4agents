@@ -362,20 +362,36 @@ def call_daemon(
                 pass
             state = None
         else:
+            pid_alive = isinstance(pid, int) and not isinstance(pid, bool) and _is_pid_alive(pid)
             try:
                 port, token = _parse_daemon_endpoint(state)
                 status_code, data = _daemon_pkg._http_post_rpc(
                     port, token, {"action": action, "params": params or {}}, timeout=timeout
                 )
             except TimeoutError:
-                if isinstance(pid, int) and not isinstance(pid, bool) and _is_pid_alive(pid):
+                if pid_alive:
                     raise
                 try:
                     state_file.unlink()
                 except OSError:
                     pass
                 state = None
-            except (ConnectionError, OSError, http.client.HTTPException, KeyError, TypeError, ValueError):
+            except (ConnectionError, OSError, http.client.HTTPException) as exc:
+                # Refused means nothing listens on the port, so no daemon got the action. Any other
+                # failure from a live daemon may come after it ran the action: sending it again to a
+                # second daemon could apply an edit twice, with two daemons sharing one runtime dir.
+                if pid_alive and not isinstance(exc, ConnectionRefusedError):
+                    raise RuntimeError(
+                        f"The PoB daemon (pid {pid}) did not answer '{action}' cleanly ({exc!r}); it may "
+                        "still be running it. Check with `pob status`, or run `pob stop` if this repeats."
+                    ) from exc
+                try:
+                    state_file.unlink()
+                except OSError:
+                    pass
+                state = None
+            except (KeyError, TypeError, ValueError):
+                # A malformed daemon.json: nothing was sent.
                 try:
                     state_file.unlink()
                 except OSError:
