@@ -32,7 +32,7 @@ Once installed, open a fresh chat and drop in your `poe.ninja` link, official Po
 
 (Note that the official profile API doesn't include Bandits or Pantheon, so double-check those with your agent after importing.)
 
-Pick a smarter model if you can (e.g. Claude Opus / Gemini / GPT), though lighter models like DeepSeek work fine too.
+Pick a smarter model if you can (e.g. Claude Opus / Gemini Neon / GPT Sol), though lighter models like DeepSeek work fine too.
 
 Tell it what build you're playing and call out any tricky core mechanics that are easy to get wrong.
 
