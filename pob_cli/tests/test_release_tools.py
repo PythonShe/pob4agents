@@ -318,3 +318,21 @@ def test_tar_links_must_stay_inside_the_archive(
 ) -> None:
     problems = rt._formats.tar_problems(_tar_with(tmp_path / "b.tar.gz", _link(name, target, kind)), ("pob",))
     assert (problems == []) is safe, problems
+
+
+def test_package_data_ships_every_bundled_data_and_lua_file() -> None:
+    """Wheels and sdists must carry what pob.spec bundles: a missing timeless meta broke PRNG synthesis."""
+    import fnmatch
+    import tomllib
+
+    pkg = REPO / "pob_cli" / "src" / "pob_cli"
+    cfg = tomllib.loads((REPO / "pob_cli" / "pyproject.toml").read_text(encoding="utf-8"))
+    patterns = cfg["tool"]["setuptools"]["package-data"]["pob_cli"]
+    shipped = [
+        f"{sub}/{p.name}"
+        for sub in ("data", "lua")
+        for p in sorted((pkg / sub).iterdir())
+        if p.is_file() and not p.name.startswith(".")
+    ]
+    missing = [rel for rel in shipped if not any(fnmatch.fnmatch(rel, pat) for pat in patterns)]
+    assert not missing, f"package-data misses {missing}"
