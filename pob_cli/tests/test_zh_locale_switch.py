@@ -640,3 +640,36 @@ def test_dual_locale_game_data_zh_match_cn_zh2en_and_timeless(
     assert slot_zh is not None and slot_zh.name == "zh-rTW"
     q_slot = query_local_data("unique", "法师之血", pob_dir=eng)
     assert q_slot["count"] == 1 and q_slot["results"][0]["zh_name"] == "魔血"
+
+
+@pytest.mark.skipif(not _has_lua_runtime(), reason="No Windows lua51.dll or engine bin/luajit available")
+def test_zh_json_keeps_parsed_files_and_retries_missing_ones(tmp_path: Path) -> None:
+    dict_dir = tmp_path / "zh-rCN"
+    dict_dir.mkdir()
+    out_file = tmp_path / "zj_out.txt"
+    script = tmp_path / "run_zj.lua"
+    script.write_text(
+        f"""
+package.path = {json.dumps((LUA_DIR / "?.lua").as_posix(), ensure_ascii=False)} .. ";" .. package.path
+local zj = require("zh_json")
+local dir = {json.dumps(dict_dir.as_posix(), ensure_ascii=False)}
+assert(zj.entries(dir, "uniques.json") == nil)
+-- a dictionary installed after a failed read is read on the next call
+local f = assert(io.open(dir .. "/uniques.json", "wb"))
+f:write('{{"entries": {{"Mageblood": "法师之血"}}, "templates": {{"a": "b"}}}}')
+f:close()
+local e1 = assert(zj.entries(dir, "uniques.json"))
+assert(e1.Mageblood == "法师之血")
+collectgarbage("collect"); collectgarbage("collect")
+-- parsed once: the same tables come back after a full GC, without touching the file again
+os.remove(dir .. "/uniques.json")
+local e2, tpl = zj.load_id_table(dir, "uniques.json")
+assert(e2 == e1 and tpl.a == "b")
+local out = assert(io.open({json.dumps(out_file.as_posix(), ensure_ascii=False)}, "wb"))
+out:write("PASS")
+out:close()
+""",
+        encoding="utf-8",
+    )
+    assert _run_lua(script) == 0
+    assert out_file.read_text(encoding="utf-8") == "PASS"

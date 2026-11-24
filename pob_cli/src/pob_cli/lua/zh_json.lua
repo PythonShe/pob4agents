@@ -138,22 +138,22 @@ local function read_file_bytes(path)
 	return data
 end
 
--- path -> { entries = tbl, templates = tbl or false }, or false for a file that cannot be read.
--- Weak values: a file stays parsed while a module holds its tables, so zh_reverse's one-off
--- reads of the large stat maps do not stay resident after its reverse tables are built.
-local cache = setmetatable({}, { __mode = "v" })
+-- path -> { entries = tbl, templates = tbl or false }: every dictionary read stays parsed for the
+-- process (a locale switch back reuses it). A file that cannot be read is not remembered, so one
+-- installed later is picked up on the next read.
+local cache = {}
 
 local function load_file(path)
 	local c = cache[path]
-	if c == nil then
-		local raw = read_file_bytes(path)
-		c = raw and {
-			entries = load_flat_section(raw, "entries", {}),
-			templates = load_flat_section(raw, "templates", nil) or false,
-		} or false
-		cache[path] = c
-	end
-	return c or nil
+	if c then return c end
+	local raw = read_file_bytes(path)
+	if not raw then return nil end
+	c = {
+		entries = load_flat_section(raw, "entries", {}),
+		templates = load_flat_section(raw, "templates", nil) or false,
+	}
+	cache[path] = c
+	return c
 end
 
 -- The "entries" map of dir/filename ({} when the file has none), nil when it cannot be read.
