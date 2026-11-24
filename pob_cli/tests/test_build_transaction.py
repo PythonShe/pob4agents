@@ -240,6 +240,40 @@ def test_what_if_repairs_a_drifted_cow_restore() -> None:
     assert [m for m, _ in w.calls].count("import_code") == 1
 
 
+class _CrashOnRestoreWorker(_CowFakeWorker):
+    """Fake whose `cow_restore` crashes the engine; the bridge restarts it on `last_good_code` and raises."""
+
+    def __init__(self, **kw: Any) -> None:
+        super().__init__(**kw)
+        self.generation = 1
+        self.restore_failed: dict[str, Any] | None = None
+
+    def call(self, method: str, params: dict[str, Any] | None = None, timeout: float | None = None) -> dict[str, Any]:
+        if method == "cow_restore":
+            self.calls.append((method, dict(params or {})))
+            self.generation += 1
+            self._cow_snaps.clear()
+            self._deserialize(str(self.last_good_code))
+            raise BridgeError("Headless engine crashed during 'cow_restore': EOF")
+        return super().call(method, params, timeout)
+
+
+def test_restore_that_crashed_the_engine_is_not_imported_again() -> None:
+    w = _CrashOnRestoreWorker(caps=_CAPS)
+    orig = w._serialize()
+    res = run_mutation(w, _set_dps(999.0), apply=False)
+    assert w._serialize() == orig
+    assert "restart already restored" in res["restoreFallback"]
+    assert [m for m, _ in w.calls].count("import_code") == 0
+
+    # A restart that could not restore the build (put aside) still re-imports.
+    w.calls.clear()
+    w.restore_failed = {"error": "x"}
+    res = run_mutation(w, _set_dps(999.0), apply=False)
+    assert "re-importing" in res["restoreFallback"]
+    assert [m for m, _ in w.calls].count("import_code") == 1
+
+
 def test_matrix_repairs_a_drifted_cow_restore() -> None:
     w = _FlakyCowWorker(caps=_CAPS)
     orig = w._serialize()

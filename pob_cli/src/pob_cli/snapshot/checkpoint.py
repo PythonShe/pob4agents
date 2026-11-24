@@ -77,14 +77,34 @@ def take_snapshot(
     return BuildSnapshot("code", code or str(worker.call("export_code", {})["code"]))
 
 
-def fall_back_to_code(worker: Any, snap: BuildSnapshot, reason: str) -> str:
-    """Re-import `snap.fallback_code` and turn `snap` into a code snapshot; return a note for the result."""
+def _restart_restored(worker: Any, generation_before: Any, code: str) -> bool:
+    """True when a call that just failed restarted the engine and the restart loaded `code` again."""
+    generation = getattr(worker, "generation", None)
+    return (
+        generation is not None
+        and generation_before is not None
+        and generation != generation_before
+        and getattr(worker, "restore_failed", None) is None
+        and getattr(worker, "last_good_code", None) == code
+    )
+
+
+def fall_back_to_code(worker: Any, snap: BuildSnapshot, reason: str, *, generation_before: Any = None) -> str:
+    """Re-import `snap.fallback_code` and turn `snap` into a code snapshot; return a note for the result.
+
+    `generation_before` is the worker's launch count before the restore that failed: when that
+    restore crashed the engine and the restart already loaded the same code, it is not imported again.
+    """
     if not snap.fallback_code:
         raise BridgeError(f"{reason}; no saved build code to restore from")
     drop_snapshot(worker, snap)
-    worker.call("import_code", {"code": snap.fallback_code, "mode": "replace"})
+    if _restart_restored(worker, generation_before, snap.fallback_code):
+        how = "the engine restart already restored the saved build code"
+    else:
+        worker.call("import_code", {"code": snap.fallback_code, "mode": "replace"})
+        how = "restored by re-importing the saved build code"
     snap.kind, snap.token, snap.proc_tag = "code", snap.fallback_code, None
-    return f"{reason}; restored by re-importing the saved build code"
+    return f"{reason}; {how}"
 
 
 def restore_snapshot(
@@ -103,7 +123,9 @@ def restore_snapshot(
     if snap.kind == "cow":
         cur_proc = getattr(worker, "_proc", None)
         reason = "the engine restarted since the CoW snapshot"
+        generation_before = None
         if cur_proc is snap.proc_tag:
+            generation_before = getattr(worker, "generation", None)
             params: dict[str, Any] = {"snapId": snap.token}
             if drop:
                 params["drop"] = True
@@ -117,7 +139,7 @@ def restore_snapshot(
                     raise
                 first_line = (strip_pob_escapes(str(exc)).strip().splitlines() or [type(exc).__name__])[0]
                 reason = f"CoW restore failed ({first_line[:200]})"
-        return fall_back_to_code(worker, snap, reason)
+        return fall_back_to_code(worker, snap, reason, generation_before=generation_before)
     worker.call("import_code", {"code": snap.token, "mode": "replace"})
     return None
 
