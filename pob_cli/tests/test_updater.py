@@ -22,6 +22,7 @@ from pob_cli.bridge_client import (
     BridgeError,
     BridgeWorker,
 )
+from pob_cli.snapshot import history_of
 from pob_cli.updater import (
     POB_MANIFEST_URL,
     POBTOOLS_DOWNLOAD_BASE,
@@ -710,8 +711,9 @@ def test_bridge_worker_dynamic_r2_and_import_code_deadlock_recovery(
         valid_xml = valid_xml.replace('characterLevelAutoMode="true"', 'characterLevelAutoMode="false"')
         assert 'level="77"' in valid_xml
         worker.call("import_code", {"code": _encode_xml(valid_xml), "mode": "replace"})
-        checkpoint = worker.update_checkpoint()
+        checkpoint = worker.call("export_code", {})["code"]
         assert checkpoint
+        history_of(worker).load_build(checkpoint, None)
         info_before = worker.call("get_build_info", {})
         assert info_before["level"] == 77
 
@@ -783,9 +785,6 @@ def test_daemon_hot_reload_serializes_concurrent_get_worker_and_status(
             self.alive = False
             self.stopped = False
             self.last_good_code: str | None = None
-            self.undo_stack: list[str] = []
-            self.redo_stack: list[str] = []
-            self.source_label: str | None = None
             self.hello_info: dict[str, Any] = {"pobVersion": "2.67.2"}
 
         def is_alive(self) -> bool:
@@ -804,9 +803,6 @@ def test_daemon_hot_reload_serializes_concurrent_get_worker_and_status(
             if self.stopped:
                 raise AssertionError("ensure_alive() called on stopped worker mid-hot-reload!")
             self.alive = True
-
-        def update_checkpoint(self) -> str:
-            return "fake-code"
 
         def call(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
             if self.stopped:
@@ -1018,9 +1014,6 @@ def test_daemon_start_non_blocking_background_update_check(
             self.pob_root = pob_dir or eng
             self.alive = False
             self.last_good_code: str | None = None
-            self.undo_stack: list[str] = []
-            self.redo_stack: list[str] = []
-            self.source_label: str | None = None
             self.hello_info: dict[str, Any] = {"pobVersion": "2.68.1"}
 
         def is_alive(self) -> bool:
@@ -1095,9 +1088,6 @@ def test_daemon_boot_bg_update_triggers_hot_reload_and_fresh_ok_checks_update_av
             self.pob_root = pob_dir or eng
             self.alive = False
             self.last_good_code: str | None = None
-            self.undo_stack: list[str] = []
-            self.redo_stack: list[str] = []
-            self.source_label: str | None = None
             self.hello_info: dict[str, Any] = {}
 
         def is_alive(self) -> bool:
@@ -1108,9 +1098,6 @@ def test_daemon_boot_bg_update_triggers_hot_reload_and_fresh_ok_checks_update_av
 
         def stop(self) -> None:
             self.alive = False
-
-        def update_checkpoint(self) -> str:
-            return ""
 
     def _fake_check(**kwargs: Any) -> dict[str, Any]:
         is_check_only = bool(kwargs.get("check_only", False))

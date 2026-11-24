@@ -23,16 +23,13 @@ from .bridge_protocol import (
     await_startup_handshake,
     check_tree_version_mismatch,
     collect_batch_responses,
-    compact_source_label,
     decode_batch_responses,
-    read_slot_state,
     rpc_rejection,
     stderr_drain_loop,
     stdout_reader_loop,
     sync_worker_state,
     validate_import_xml_guardrail,
     validate_rpc_method,
-    write_slot_state,
 )
 from .bridge_trees import rpc_tree_stage_error, stage_tree_versions_hint
 from .locale_cfg import current_lang, normalize_lang
@@ -71,8 +68,6 @@ __all__ = [
 class BridgeWorker:
     """Manages a single pob-zh.exe --engine-headless subprocess with lock, timeout, and stderr drain."""
 
-    _compact_source_label = staticmethod(compact_source_label)
-
     def __init__(
         self,
         slot_name: str = "main",
@@ -108,19 +103,14 @@ class BridgeWorker:
         self.locale: str | None = None
         self.translate_enabled: bool | None = None
         self.last_used: float = time.time()
-        self.source_label: str | None = None
+        # The build a (re)start restores: the slot's committed build, kept equal by its SlotHistory.
         self.last_good_code: str | None = None
-        self.rev: int = 0
         # Bumped on every engine launch, so a heal step can tell that a restart already restored the build.
         self.generation: int = 0
         self.boot_build_loaded: Any = None
         # Set when the saved build could not be restored at boot (see bridge_boot.put_code_aside).
         self.restore_failed: dict[str, Any] | None = None
         self._recovering = False
-
-        # Undo / Redo stacks holding lossless export_code strings (max 30 steps)
-        self.undo_stack: list[str] = []
-        self.redo_stack: list[str] = []
 
         # Cached static tree data per treeVersion
         self._tree_data_cache: dict[str, dict[str, Any]] = {}
@@ -156,8 +146,6 @@ class BridgeWorker:
                 if target_code is None:
                     self.last_good_code = None
             else:
-                if not self.last_good_code:
-                    self.load_slot_state()
                 target_code = self.last_good_code
             self._launch_unlocked()
             try:
@@ -241,42 +229,6 @@ class BridgeWorker:
     @property
     def slot_state_path(self) -> Path:
         return get_runtime_dir(self.runtime_dir) / f"slot_{self.slot_name}.json"
-
-    def bump_rev(self) -> int:
-        """Increment and return the monotonic build-state revision counter for this slot."""
-        with self._lock:
-            self.rev = int(self.rev) + 1
-            return self.rev
-
-    def save_slot_state(self) -> None:
-        """Persist slot build code and undo/redo stacks so daemon restarts never lose state."""
-        if self.slot_name == "test":
-            return
-        self.source_label = compact_source_label(self.source_label)
-        write_slot_state(
-            self.slot_state_path,
-            slot_name=self.slot_name,
-            last_good_code=self.last_good_code,
-            undo_stack=self.undo_stack,
-            redo_stack=self.redo_stack,
-            source_label=self.source_label,
-            rev=self.rev,
-        )
-
-    def load_slot_state(self) -> None:
-        """Load persisted slot build code and undo/redo stacks if present."""
-        if self.slot_name == "test":
-            return
-        data = read_slot_state(self.slot_state_path)
-        if not data:
-            return
-        self.last_good_code = data.get("last_good_code")
-        self.undo_stack = list(data.get("undo_stack") or [])
-        self.redo_stack = list(data.get("redo_stack") or [])
-        self.source_label = compact_source_label(data.get("source_label"))
-        raw_rev = data.get("rev")
-        if isinstance(raw_rev, int) and raw_rev >= 0:
-            self.rev = raw_rev
 
     def _kill_unlocked(self) -> None:
         if self._proc is not None:
@@ -576,15 +528,6 @@ class BridgeWorker:
         norm = normalize_lang(lang)
         with self._lock:
             return apply_worker_locale(self, norm)
-
-    def update_checkpoint(self) -> str:
-        """Export current build code into last_good_code for crash recovery."""
-        with self._lock:
-            res = self._raw_call_unlocked("export_code", {}, timeout=10.0)
-            code = res.get("code", "")
-            if code:
-                self.last_good_code = code
-            return code
 
     def get_cached_tree_data(self, tree_version: str | None = None) -> dict[str, Any]:
         """Fetch and cache static tree_data for the active tree version."""

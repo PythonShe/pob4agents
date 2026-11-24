@@ -439,6 +439,20 @@ def fetch_share_url_code_fallback(url: str) -> str:
         raise wrap_share_http_error(exc, clean_url) from exc
 
 
+def load_source_label(source: str | None, character: Any = None) -> str:
+    """The slot's `sourceLabel` for a build loaded from `source` (or an official profile `character`)."""
+    if isinstance(character, dict):
+        return f"profile:{character.get('accountName')}/{character.get('name')}"
+    if not source:
+        return "xml_file"
+    src_s = source.strip()
+    if len(src_s) > 120 and not src_s.startswith(("http://", "https://", "<")):
+        return f"share_code({len(src_s)} chars)"
+    if len(src_s) > 200:
+        return f"{src_s[:120]}... ({len(src_s)} chars)"
+    return src_s
+
+
 def load_build_into_worker(
     worker: BridgeWorker,
     *,
@@ -448,7 +462,10 @@ def load_build_into_worker(
     league: str | None = None,
     realm: str | None = None,
 ) -> dict[str, Any]:
-    """Load a build into `worker` from XML, share URL, official profile, or Base64 code (R11)."""
+    """Load a build into `worker` from XML, share URL, official profile, or Base64 code (R11).
+
+    Only the engine changes here; `snapshot.load_build` commits the loaded build to the slot.
+    """
     from .guardrails import validate_build_xml, validate_url
     from .profile_import import load_official_profile_into_worker, should_route_official_profile
 
@@ -513,25 +530,6 @@ def load_build_into_worker(
                     import_method = "share_code"
         else:
             raise ValueError("Either 'source' or 'xml_code' must be provided.")
-
-        exp = worker.call("export_code", {})
-        worker.last_good_code = exp.get("code")
-        ch = prof_extra.get("character")
-        if isinstance(ch, dict):
-            worker.source_label = f"profile:{ch.get('accountName')}/{ch.get('name')}"
-        elif source:
-            src_s = source.strip()
-            if len(src_s) > 120 and not src_s.startswith(("http://", "https://", "<")):
-                worker.source_label = f"share_code({len(src_s)} chars)"
-            elif len(src_s) > 200:
-                worker.source_label = f"{src_s[:120]}... ({len(src_s)} chars)"
-            else:
-                worker.source_label = src_s
-        else:
-            worker.source_label = "xml_file"
-        worker.undo_stack.clear()
-        worker.redo_stack.clear()
-        worker.save_slot_state()
 
         out: dict[str, Any] = {
             "importMethod": import_method,

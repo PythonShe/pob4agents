@@ -848,7 +848,6 @@ class _FakeBatchWorker:
             self._code_ver += 1
             code = f"SNAP_{self._code_ver}"
             self._code_snapshots[code] = dict(self._state_stats)
-            self.last_good_code = code
             return {"code": code}
         if method == "import_code":
             code = params["code"]

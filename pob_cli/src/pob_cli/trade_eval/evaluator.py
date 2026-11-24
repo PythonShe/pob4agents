@@ -302,8 +302,19 @@ def _prefilter_raw_items_for_eval(
     return [row[2] for row in scored[:effective_k]]
 
 
+def _summary(digest: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "primaryDpsKey": digest["primaryDpsKey"],
+        "primaryDps": digest["primaryDps"],
+        "totalEhp": digest["totalEhp"],
+        "life": digest["life"],
+        "points": digest.get("buildInfo", {}).get("points", {}),
+    }
+
+
 def _eval_trade_items_cow(
     worker: Any,
+    tx: Any,
     *,
     resolved_slot: str | None,
     items: list[dict[str, Any]],
@@ -311,75 +322,35 @@ def _eval_trade_items_cow(
     digest_before: dict[str, Any],
     use_direct: bool,
 ) -> list[dict[str, Any]]:
-    """Evaluate candidates using `cow_snapshot`/`cow_restore` (C2c) and optional `direct_calc` (C1)."""
+    """Evaluate candidates on the transaction's CoW checkpoint (C2c), restored between items, with optional `direct_calc` (C1)."""
     from ..snapshot import capture_digest, diff_digest
 
-    orig_proc = getattr(worker, "_proc", None)
-    fallback_code: str | None = getattr(worker, "last_good_code", None)
-    snap_id: str | None = str(worker.call("cow_snapshot", {})["snapId"])
     results: list[dict[str, Any]] = []
     total_items = len(items)
-
-    def _restore_base(*, drop: bool) -> None:
-        nonlocal snap_id, orig_proc
-        cur_proc = getattr(worker, "_proc", None)
-        if snap_id is not None and cur_proc is orig_proc:
-            try:
-                worker.call("cow_restore", {"snapId": snap_id, "drop": drop})
-                if drop:
-                    snap_id = None
-                return
-            except Exception:
-                snap_id = None
-        snap_id = None
-        if fallback_code is not None:
-            worker.call("import_code", {"code": fallback_code, "mode": "replace"})
-            if not drop and (getattr(worker, "caps", None) or {}).get("cowSnapshot"):
-                try:
-                    orig_proc = getattr(worker, "_proc", None)
-                    snap_id = str(worker.call("cow_snapshot", {})["snapId"])
-                except Exception:
-                    snap_id = None
-
-    try:
-        for pos, entry in enumerate(items):
-            item_id = entry.get("id")
-            raw_clean = str(entry.get("raw") or "").strip()
-            if not raw_clean:
-                results.append({"id": item_id, "ok": False, "error": "Empty item text."})
-                continue
-            try:
-                add_params: dict[str, Any] = {"raw": raw_clean, "equip": True}
-                if resolved_slot:
-                    add_params["slotName"] = resolved_slot
-                worker.call("add_item", add_params)
-                digest_after = (
-                    _digest_from_direct_calc(worker, digest_before)
-                    if use_direct
-                    else capture_digest(worker)
-                )
-                diff = diff_digest(digest_before, digest_after)
-                results.append(
-                    {
-                        "id": item_id,
-                        "ok": True,
-                        "before": before_summary,
-                        "after": {
-                            "primaryDpsKey": digest_after["primaryDpsKey"],
-                            "primaryDps": digest_after["primaryDps"],
-                            "totalEhp": digest_after["totalEhp"],
-                            "life": digest_after["life"],
-                            "points": digest_after.get("buildInfo", {}).get("points", {}),
-                        },
-                        "diff": diff,
-                    }
-                )
-            except Exception as exc:
-                results.append({"id": item_id, "ok": False, "error": str(exc)})
-            if pos < total_items - 1:
-                _restore_base(drop=False)
-    finally:
-        _restore_base(drop=True)
+    for pos, entry in enumerate(items):
+        item_id = entry.get("id")
+        raw_clean = str(entry.get("raw") or "").strip()
+        if not raw_clean:
+            results.append({"id": item_id, "ok": False, "error": "Empty item text."})
+            continue
+        try:
+            add_params: dict[str, Any] = {"raw": raw_clean, "equip": True}
+            if resolved_slot:
+                add_params["slotName"] = resolved_slot
+            worker.call("add_item", add_params)
+            digest_after = (
+                _digest_from_direct_calc(worker, digest_before)
+                if use_direct
+                else capture_digest(worker)
+            )
+            diff = diff_digest(digest_before, digest_after)
+            results.append(
+                {"id": item_id, "ok": True, "before": before_summary, "after": _summary(digest_after), "diff": diff}
+            )
+        except Exception as exc:
+            results.append({"id": item_id, "ok": False, "error": str(exc)})
+        if pos < total_items - 1:
+            tx.restore()
     return results
 
 
@@ -392,69 +363,47 @@ def eval_trade_items(
 ) -> dict[str, Any]:
     """Read-only batch what-if evaluation of candidate items against a single build snapshot.
 
-    Uses `cow_snapshot`/`cow_restore` (+ `direct_calc`) when advertised in `worker.caps`;
-    otherwise keeps the fast in-place swap and `import_code` fallback path.
+    Runs in a `BuildTransaction`: on a CoW checkpoint (`cow_restore` between items, `direct_calc`
+    when advertised, verified at the end), otherwise with the fast in-place swap and `import_code`
+    restores of the committed build.
     """
     if not items:
         return {"slotName": slot_name, "before": None, "results": []}
 
     from ..analyzer import resolve_slot_name
-    from ..snapshot import _call_batch, capture_digest, diff_digest
+    from ..snapshot import BuildTransaction, _call_batch, capture_digest, diff_digest
 
     caps = getattr(worker, "caps", None) or {}
-    use_cow = bool(caps.get("cowSnapshot"))
     use_direct = bool(caps.get("directCalc"))
 
-    with worker.lock:
+    with BuildTransaction(worker) as tx:
+        assert tx.base is not None
         eval_items = _prefilter_raw_items_for_eval(worker, items, prefilter_k)
-        prev_last_good = getattr(worker, "last_good_code", None)
-        if use_cow:
+        if tx.base.kind == "cow":
             items_res = worker.call("list_items", {})
             resolved_slot = resolve_slot_name(worker, slot_name, items_res=items_res) if slot_name else None
             digest_before = capture_digest(worker)
-            before_summary = {
-                "primaryDpsKey": digest_before["primaryDpsKey"],
-                "primaryDps": digest_before["primaryDps"],
-                "totalEhp": digest_before["totalEhp"],
-                "life": digest_before["life"],
-                "points": digest_before.get("buildInfo", {}).get("points", {}),
-            }
-            try:
-                results = _eval_trade_items_cow(
-                    worker,
-                    resolved_slot=resolved_slot,
-                    items=eval_items,
-                    before_summary=before_summary,
-                    digest_before=digest_before,
-                    use_direct=use_direct,
-                )
-            finally:
-                if hasattr(worker, "last_good_code"):
-                    worker.last_good_code = prev_last_good
+            before_summary = _summary(digest_before)
+            results = _eval_trade_items_cow(
+                worker,
+                tx,
+                resolved_slot=resolved_slot,
+                items=eval_items,
+                before_summary=before_summary,
+                digest_before=digest_before,
+                use_direct=use_direct,
+            )
+            tx.rollback_verified(digest_before)
             return {
                 "slotName": resolved_slot or slot_name,
                 "before": before_summary,
                 "results": results,
             }
 
-        items_res, export_res, skills_res = _call_batch(
-            worker,
-            [
-                ("list_items", {}),
-                ("export_code", {}),
-                ("list_skills", {}),
-            ],
-        )
+        items_res, skills_res = _call_batch(worker, [("list_items", {}), ("list_skills", {})])
         resolved_slot = resolve_slot_name(worker, slot_name, items_res=items_res) if slot_name else None
-        snap_before = export_res["code"]
         digest_before = capture_digest(worker)
-        before_summary = {
-            "primaryDpsKey": digest_before["primaryDpsKey"],
-            "primaryDps": digest_before["primaryDps"],
-            "totalEhp": digest_before["totalEhp"],
-            "life": digest_before["life"],
-            "points": digest_before.get("buildInfo", {}).get("points", {}),
-        }
+        before_summary = _summary(digest_before)
 
         slots = items_res.get("slots", []) if isinstance(items_res, dict) else []
         items_by_id = {it["id"]: it for it in (items_res.get("items", []) if isinstance(items_res, dict) else []) if "id" in it}
@@ -497,75 +446,62 @@ def eval_trade_items(
         any_mutation = False
         total_items = len(eval_items)
 
-        try:
-            for pos, entry in enumerate(eval_items):
-                item_id = entry.get("id")
-                raw_clean = str(entry.get("raw") or "").strip()
-                if not raw_clean:
-                    results.append({"id": item_id, "ok": False, "error": "Empty item text."})
-                    continue
+        for pos, entry in enumerate(eval_items):
+            item_id = entry.get("id")
+            raw_clean = str(entry.get("raw") or "").strip()
+            if not raw_clean:
+                results.append({"id": item_id, "ok": False, "error": "Empty item text."})
+                continue
 
-                if needs_full_restore:
-                    worker.call("import_code", {"code": snap_before, "mode": "replace"})
-                    needs_full_restore = False
+            if needs_full_restore:
+                tx.restore()
+                needs_full_restore = False
 
-                use_fast_swap = slot_fast_swap_eligible and not _is_complex_trade_item(raw_clean, resolved_slot)
+            use_fast_swap = slot_fast_swap_eligible and not _is_complex_trade_item(raw_clean, resolved_slot)
 
-                try:
-                    add_params: dict[str, Any] = {"raw": raw_clean, "equip": True}
-                    if resolved_slot:
-                        add_params["slotName"] = resolved_slot
-                    any_mutation = True
-                    add_res = worker.call("add_item", add_params)
-                    new_item_obj = add_res.get("item") if isinstance(add_res, dict) else None
-                    new_item_id = new_item_obj.get("id") if isinstance(new_item_obj, dict) else None
-                    new_item_type = str(new_item_obj.get("type") or "") if isinstance(new_item_obj, dict) else ""
-                    if new_item_type in _TWO_HANDED_ITEM_TYPES:
-                        use_fast_swap = False
-                    if partner_weapon_equipped and new_item_type != prev_item_type:
-                        use_fast_swap = False
+            try:
+                add_params: dict[str, Any] = {"raw": raw_clean, "equip": True}
+                if resolved_slot:
+                    add_params["slotName"] = resolved_slot
+                any_mutation = True
+                add_res = worker.call("add_item", add_params)
+                new_item_obj = add_res.get("item") if isinstance(add_res, dict) else None
+                new_item_id = new_item_obj.get("id") if isinstance(new_item_obj, dict) else None
+                new_item_type = str(new_item_obj.get("type") or "") if isinstance(new_item_obj, dict) else ""
+                if new_item_type in _TWO_HANDED_ITEM_TYPES:
+                    use_fast_swap = False
+                if partner_weapon_equipped and new_item_type != prev_item_type:
+                    use_fast_swap = False
 
-                    digest_after = capture_digest(worker)
-                    diff = diff_digest(digest_before, digest_after)
-                    results.append(
-                        {
-                            "id": item_id,
-                            "ok": True,
-                            "before": before_summary,
-                            "after": {
-                                "primaryDpsKey": digest_after["primaryDpsKey"],
-                                "primaryDps": digest_after["primaryDps"],
-                                "totalEhp": digest_after["totalEhp"],
-                                "life": digest_after["life"],
-                                "points": digest_after.get("buildInfo", {}).get("points", {}),
-                            },
-                            "diff": diff,
-                        }
-                    )
+                digest_after = capture_digest(worker)
+                diff = diff_digest(digest_before, digest_after)
+                results.append(
+                    {"id": item_id, "ok": True, "before": before_summary, "after": _summary(digest_after), "diff": diff}
+                )
 
-                    has_more = pos < total_items - 1
-                    if has_more:
-                        if use_fast_swap and prev_item_id is not None and new_item_id is not None and int(new_item_id) != prev_item_id:
-                            try:
-                                _call_batch(
-                                    worker,
-                                    [
-                                        ("equip_item", {"id": prev_item_id, "slotName": resolved_slot}),
-                                        ("delete_item", {"id": int(new_item_id)}),
-                                    ],
-                                )
-                            except Exception:
-                                needs_full_restore = True
-                        else:
+                has_more = pos < total_items - 1
+                if has_more:
+                    if use_fast_swap and prev_item_id is not None and new_item_id is not None and int(new_item_id) != prev_item_id:
+                        try:
+                            _call_batch(
+                                worker,
+                                [
+                                    ("equip_item", {"id": prev_item_id, "slotName": resolved_slot}),
+                                    ("delete_item", {"id": int(new_item_id)}),
+                                ],
+                            )
+                        except Exception:
                             needs_full_restore = True
-                except Exception as exc:
-                    needs_full_restore = True
-                    results.append({"id": item_id, "ok": False, "error": str(exc)})
-        finally:
-            if any_mutation:
-                worker.call("import_code", {"code": snap_before, "mode": "replace"})
-            if hasattr(worker, "last_good_code"):
-                worker.last_good_code = prev_last_good
+                    else:
+                        needs_full_restore = True
+            except Exception as exc:
+                needs_full_restore = True
+                results.append({"id": item_id, "ok": False, "error": str(exc)})
+
+        if any_mutation:
+            tx.rollback()
+        else:
+            tx.release()
 
         return {
             "slotName": resolved_slot or slot_name,

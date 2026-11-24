@@ -41,8 +41,6 @@ class _CapsFakeWorker:
             self.caps = dict(caps or {})
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.last_good_code: str | None = "ORIG_LAST_GOOD"
-        self.undo_stack: list[str] = []
-        self.redo_stack: list[str] = []
         self._base_dps = 1_000_000.0
         self._cur_dps = self._base_dps
         self._snaps: dict[str, float] = {}

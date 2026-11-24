@@ -14,9 +14,11 @@ from pob_cli import item_inspect
 from pob_cli.bridge_client import BridgeError, BridgeWorker
 from pob_cli.errors import DaemonRequestError
 from pob_cli.mutators import edit_item_mods, run_batch, run_sweep, switch_main
-from pob_cli.mutators.batch_ops import ops_need_lossless_snapshot
+from pob_cli.mutators.batch_ops import ops_scope
 from pob_cli.snapshot import (
     CORE_STAT_KEYS,
+    BuildScope,
+    history_of,
     restore_snapshot,
     run_mutation,
     supports_cow_snapshot,
@@ -97,18 +99,20 @@ def test_sweep_reimports_saved_code_when_cow_restore_drifts() -> None:
 
 
 def test_set_switching_ops_take_an_export_checkpoint() -> None:
-    assert ops_need_lossless_snapshot([{"op": "new_build"}])
-    assert ops_need_lossless_snapshot([{"op": "import-tree-url", "url": "x"}])
+    assert ops_scope([{"op": "new_build"}]) is BuildScope.REPLACES_BUILD
+    assert ops_scope([{"op": "import-tree-url", "url": "x"}]) is BuildScope.SETS
     for key in ("spec", "itemSet", "skill_set_id", "configSet", "loadout"):
-        assert ops_need_lossless_snapshot([{"op": "switch_main", key: 2}]), key
-    assert not ops_need_lossless_snapshot([{"op": "switch_main", "skillPart": 2, "spec": None}])
-    assert not ops_need_lossless_snapshot([{"op": "config", "set": {"x": 1}}, "junk"])  # type: ignore[list-item]
+        assert ops_scope([{"op": "switch_main", key: 2}]) is BuildScope.SETS, key
+    assert ops_scope([{"op": "switch_main", "skillPart": 2, "spec": None}]) is BuildScope.ACTIVE_SETS
+    assert ops_scope([{"op": "config", "set": {"x": 1}}, "junk"]) is BuildScope.ACTIVE_SETS  # type: ignore[list-item]
+    assert ops_scope([{"op": "config"}], [{"op": "new_build"}], None) is BuildScope.REPLACES_BUILD
 
+    # The committed build is the live one, so the export_code checkpoint is that code: no export.
     w = _CowFakeWorker(caps={"cowSnapshot": True, "directCalc": True})
-    run_mutation(w, _bump, apply=False, lossless=True)
+    run_mutation(w, _bump, apply=False, scope=BuildScope.SETS)
     methods = [m for m, _ in w.calls]
     assert "cow_snapshot" not in methods
-    assert methods.count("export_code") == 1 and methods.count("import_code") == 1
+    assert methods.count("export_code") == 0 and methods.count("import_code") == 1
 
 
 _AFFIX_ENTRIES = [
@@ -203,7 +207,7 @@ def live_sets_worker():
         worker.call("set_config_set", {"id": 1})
         # One import round-trip so later exports compare byte for byte.
         worker.call("import_code", {"code": worker.call("export_code", {})["code"], "mode": "replace"})
-        worker.update_checkpoint()
+        history_of(worker).load_build(worker.call("export_code", {})["code"], None)
         yield worker
     finally:
         worker.stop()

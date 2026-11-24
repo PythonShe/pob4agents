@@ -22,6 +22,7 @@ from pob_cli.snapshot import (
     capture_digest,
     capture_direct_digest,
     drop_snapshot,
+    history_of,
     restore_snapshot,
     run_mutation,
     supports_cow_snapshot,
@@ -43,11 +44,7 @@ class _CowFakeWorker:
         self.lock = threading.RLock()
         if not omit_caps_attr:
             self.caps: dict[str, Any] = dict(caps or {})
-        self.undo_stack: list[str] = []
-        self.redo_stack: list[str] = []
-        self.last_good_code: str | None = "INIT_GOOD_CODE"
         self.calls: list[tuple[str, dict[str, Any]]] = []
-        self.save_slot_state_calls = 0
 
         self.dps = 120000.0
         self.full_dps = 0.0
@@ -59,9 +56,8 @@ class _CowFakeWorker:
         self.slot_items: dict[str, str] = {}
         self._cow_snaps: dict[str, str] = {}
         self._cow_seq = 0
-
-    def save_slot_state(self) -> None:
-        self.save_slot_state_calls += 1
+        # The slot's committed build is the live one, as outside any transaction on a real worker.
+        self.last_good_code: str | None = self._serialize()
 
     def _serialize(self) -> str:
         return json.dumps(
@@ -214,7 +210,7 @@ def test_capability_helpers_safe_when_fake_worker_omits_caps() -> None:
     assert supports_cow_snapshot(no_caps) is False
     assert supports_direct_calc(no_caps) is False
 
-    # Legacy run_mutation what-if keeps exact export_code/import_code call counts
+    # Legacy run_mutation what-if restores the committed build: no export, one import
     def _bump(w: Any) -> dict[str, Any]:
         w.dps += 15000.0
         return {"bumped": True}
@@ -224,7 +220,7 @@ def test_capability_helpers_safe_when_fake_worker_omits_caps() -> None:
     assert res["after"]["primaryDps"] == pytest.approx(135000.0)
     assert no_caps.dps == pytest.approx(120000.0)
     methods = [m for m, _ in no_caps.calls]
-    assert methods.count("export_code") == 1
+    assert methods.count("export_code") == 0
     assert methods.count("import_code") == 1
     assert "cow_snapshot" not in methods
     assert "cow_restore" not in methods
@@ -245,12 +241,14 @@ def test_run_mutation_cow_what_if_vs_apply_exports_xml() -> None:
     assert res_whatif["after"]["primaryDps"] == pytest.approx(180000.0)
     assert w._serialize() == orig_state
     assert w._cow_snaps == {}
-    assert w.last_good_code == "INIT_GOOD_CODE"
+    assert w.last_good_code == orig_state
     methods = [m for m, _ in w.calls]
     assert methods.count("cow_snapshot") == 1
     assert methods.count("cow_restore") == 1
     assert methods.count("export_code") == 0
     assert methods.count("import_code") == 0
+    # The restore is verified: one recalculation, and get_stats carries no passive count.
+    assert methods.count("get_stats") == 3 and methods.count("get_build_info") == 3
 
     # 2. Exception during apply=False still restores and drops CoW snapshot cleanly
     w.calls.clear()
@@ -266,17 +264,17 @@ def test_run_mutation_cow_what_if_vs_apply_exports_xml() -> None:
     assert [m for m, _ in w.calls].count("cow_restore") == 1
     assert [m for m, _ in w.calls].count("import_code") == 0
 
-    # 3. apply=True MUST still export XML for undo_stack and slot_<slug>.json (0 cow_snapshot!)
+    # 3. apply=True exports only the new build: the committed one is the undo step (0 cow_snapshot!)
     w.calls.clear()
     res_apply = run_mutation(w, _mutate, apply=True)
     assert res_apply["applied"] is True
     assert w.dps == pytest.approx(180000.0)
-    assert len(w.undo_stack) == 1
-    assert w.undo_stack[0] == orig_state
-    assert w.last_good_code == w._serialize()
-    assert w.save_slot_state_calls == 1
+    hist = history_of(w)
+    assert hist.undo == [orig_state]
+    assert w.last_good_code == hist.committed == w._serialize()
+    assert hist.rev == 1
     apply_methods = [m for m, _ in w.calls]
-    assert apply_methods.count("export_code") == 2
+    assert apply_methods.count("export_code") == 1
     assert apply_methods.count("cow_snapshot") == 0
 
 
@@ -348,10 +346,11 @@ def test_run_sweep_with_cow_and_direct_calc_zero_xml_roundtrips() -> None:
     assert res["restoreCheck"]["verified"] is True
     assert w._serialize() == orig_state
     assert w._cow_snaps == {}
-    assert w.last_good_code == "INIT_GOOD_CODE"
+    assert w.last_good_code == orig_state
 
     methods = [m for m, _ in w.calls]
-    assert methods.count("export_code") == 0
+    # The base checkpoint's fallback must be the base build, so it is exported once.
+    assert methods.count("export_code") == 1
     assert methods.count("import_code") == 0
     assert methods.count("cow_snapshot") == 2  # orig + base_ops
     assert methods.count("cow_drop") == 1  # base_snap dropped in finally
@@ -511,7 +510,7 @@ def live_cow_worker():
         ])
         worker.call("add_item", {"raw": ring_raw, "slotName": "Ring 1", "equip": True})
         worker.call("set_config", {"var": "usePowerCharges", "value": True})
-        worker.update_checkpoint()
+        history_of(worker).load_build(worker.call("export_code", {})["code"], None)
         yield worker
     finally:
         worker.stop()
@@ -624,7 +623,7 @@ def test_live_nested_cluster_jewel_cow_rollback_zero_drift(live_cow_worker: Brid
         assert verify_cow_restored(live_cow_worker, before_digest)["verified"] is True
     finally:
         live_cow_worker.call("import_code", {"code": saved_code, "mode": "replace"})
-        live_cow_worker.update_checkpoint()
+        history_of(live_cow_worker).load_build(live_cow_worker.call("export_code", {})["code"], None)
 
 
 def test_live_sweep_rejects_fourth_suffix_on_3p3s_rare_amulet(live_cow_worker: BridgeWorker) -> None:
@@ -657,4 +656,4 @@ def test_live_sweep_rejects_fourth_suffix_on_3p3s_rare_amulet(live_cow_worker: B
         assert sw["restoreCheck"]["verified"] is True
     finally:
         live_cow_worker.call("import_code", {"code": saved_code, "mode": "replace"})
-        live_cow_worker.update_checkpoint()
+        history_of(live_cow_worker).load_build(live_cow_worker.call("export_code", {})["code"], None)

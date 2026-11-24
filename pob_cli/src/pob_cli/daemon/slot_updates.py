@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..guardrails import get_auth_env_status
 from ..locale_cfg import get_active_lang, normalize_lang, set_active_lang
+from ..snapshot import history_of
 from ..updater import (
     is_valid_engine_dir,
     resolve_engine_root,
@@ -43,7 +44,11 @@ def hot_reload_update(
     force: bool = False,
     offline: bool = False,
 ) -> dict[str, Any]:
-    """Atomically snapshot all slots, stop workers to unlock Windows DLLs, update engine, and restore slots."""
+    """Stop every slot's worker (unlocking Windows DLLs), update the engine, and restart the slots.
+
+    Each slot keeps its `SlotHistory`, so a new worker comes back on the committed build with the
+    same undo/redo stacks and revision; outside a transaction the live build is the committed one.
+    """
     import pob_cli.daemon as _daemon_pkg
 
     with manager._update_check_lock, manager._exclusive_barrier():
@@ -51,22 +56,9 @@ def hot_reload_update(
             return manager.update_status
         saved_slots: dict[str, dict[str, Any]] = {}
         for slot_name, worker in list(manager._workers.items()):
-            was_alive = worker.is_alive()
-            code = worker.last_good_code
-            if was_alive:
-                try:
-                    exported = worker.update_checkpoint()
-                    if exported:
-                        code = exported
-                except Exception:
-                    pass
-            saved_slots[slot_name] = {
-                "was_alive": was_alive,
-                "code": code,
-                "undo": list(worker.undo_stack),
-                "redo": list(worker.redo_stack),
-                "source_label": worker.source_label,
-            }
+            history = history_of(worker)
+            manager._histories[slot_name] = history
+            saved_slots[slot_name] = {"was_alive": worker.is_alive(), "code": history.committed}
             try:
                 worker.stop()
             except Exception:
@@ -92,10 +84,6 @@ def hot_reload_update(
             if slot_name != "main" and not (snap["was_alive"] or snap["code"]):
                 continue
             w = manager._new_worker(slot_name)
-            w.last_good_code = snap["code"]
-            w.undo_stack = snap["undo"]
-            w.redo_stack = snap["redo"]
-            w.source_label = snap["source_label"]
             if engine_valid and (slot_name == "main" or snap["was_alive"]):
                 w.start()
             new_workers[slot_name] = w

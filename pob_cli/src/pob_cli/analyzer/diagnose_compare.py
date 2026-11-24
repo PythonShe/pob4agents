@@ -6,6 +6,7 @@ from collections.abc import Iterable
 from typing import Any
 
 from ..bridge_client import BridgeWorker
+from ..snapshot import history_of
 from .constants import _PANTHEON_HINTS
 
 
@@ -147,7 +148,7 @@ def _build_diagnose_env(
         pob_ver = hello.get("pobVersion") or "unknown"
     tree_ver = info.get("treeVersion") or "3_30"
     patch_str = str(tree_ver).replace("_", ".") if str(tree_ver).startswith("3_") else "3.30"
-    worker_rev = getattr(worker, "rev", None)
+    worker_rev = history_of(worker).rev
     env: dict[str, Any] = {
         "game": "poe1",
         "patch": patch_str,
@@ -185,7 +186,7 @@ def diagnose_compare_builds(
     import pob_cli.analyzer as _analyzer
 
     from ..comparator import _run_worker_pair, compare_builds
-    from ..importers import load_build_into_worker
+    from ..snapshot import load_build
 
     def _load_into(
         worker: Any,
@@ -197,7 +198,7 @@ def diagnose_compare_builds(
         c_realm: str | None = None,
     ) -> None:
         if src or code:
-            load_build_into_worker(
+            load_build(
                 worker,
                 source=src,
                 xml_code=code,
@@ -205,10 +206,6 @@ def diagnose_compare_builds(
                 league=c_league,
                 realm=c_realm,
             )
-            if hasattr(worker, "bump_rev"):
-                worker.bump_rev()
-                if hasattr(worker, "save_slot_state"):
-                    worker.save_slot_state()
 
     _run_worker_pair(
         main_worker,

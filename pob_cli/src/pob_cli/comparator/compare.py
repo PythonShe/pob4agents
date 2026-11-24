@@ -15,12 +15,14 @@ from ..analyzer import (
 )
 from ..bridge_client import BridgeWorker
 from ..formatters import _parse_numeric_or_none, fmt_delta, fmt_num, strip_pob_escapes
-from ..importers import load_build_into_worker, share_code_to_xml
+from ..importers import share_code_to_xml
 from ..snapshot import (
     CORE_STAT_KEYS,
+    BuildTransaction,
     _call_batch,
     _json_safe_stat,
     capture_digest,
+    load_build,
     run_mutation,
 )
 
@@ -283,52 +285,43 @@ def compare_builds(
     """Compare `main` build vs `ref` build across 3 baselines + tree, skill, and item diffs."""
     started = time.monotonic()
     if ref_source or ref_xml_code:
-        load_build_into_worker(ref_worker, source=ref_source, xml_code=ref_xml_code)
+        load_build(ref_worker, source=ref_source, xml_code=ref_xml_code)
 
     def _capture_main_phase1() -> dict[str, Any]:
         with main_worker.lock:
-            prev_last_good = getattr(main_worker, "last_good_code", None)
             orig = capture_digest(main_worker)
             tree = inspect_tree(main_worker)
-            skills, items, cfg, exp = _call_batch(
+            skills, items, cfg = _call_batch(
                 main_worker,
-                [("list_skills", {}), ("list_items", {}), ("list_config", {}), ("export_code", {})],
+                [("list_skills", {}), ("list_items", {}), ("list_config", {})],
             )
-            if hasattr(main_worker, "last_good_code"):
-                main_worker.last_good_code = prev_last_good
             return {
                 "orig": orig,
                 "tree": tree,
                 "skills": skills,
                 "items": items,
                 "env": _extract_env_config_from_cfg(cfg),
-                "snap": exp["code"],
-                "prev_last_good": prev_last_good,
             }
 
     def _capture_ref_phase1() -> dict[str, Any]:
         with ref_worker.lock:
-            prev_last_good = getattr(ref_worker, "last_good_code", None)
             orig = capture_digest(ref_worker)
             tree = inspect_tree(ref_worker)
             skills, items, exp = _call_batch(
                 ref_worker,
                 [("list_skills", {}), ("list_items", {}), ("export_code", {})],
             )
-            if hasattr(ref_worker, "last_good_code"):
-                ref_worker.last_good_code = prev_last_good
             return {
                 "orig": orig,
                 "tree": tree,
                 "skills": skills,
                 "items": items,
                 "snap": exp["code"],
-                "prev_last_good": prev_last_good,
             }
 
     main_p1, ref_p1 = _run_worker_pair(main_worker, ref_worker, _capture_main_phase1, _capture_ref_phase1)
     main_orig, ref_orig = main_p1["orig"], ref_p1["orig"]
-    main_env, main_snap, ref_snap = main_p1["env"], main_p1["snap"], ref_p1["snap"]
+    main_env, ref_snap = main_p1["env"], ref_p1["snap"]
     baseline_1 = _build_pair_table(main_orig, ref_orig)
 
     tree_diff, skill_diff, slot_comparison = _build_compare_structural_diffs(
@@ -340,38 +333,22 @@ def compare_builds(
         ref_p1["items"],
     )
 
-    main_prev_last_good = main_p1["prev_last_good"]
-    ref_prev_last_good = ref_p1["prev_last_good"]
-
     def _eval_main_phase2() -> tuple[dict[str, list[str]], dict[str, Any]]:
-        with main_worker.lock:
-            try:
-                stripped = dewater_build_in_place(main_worker)
-                dewatered = capture_digest(main_worker)
-                return stripped, dewatered
-            finally:
-                main_worker.call("import_code", {"code": main_snap, "mode": "replace"})
-                if hasattr(main_worker, "last_good_code"):
-                    main_worker.last_good_code = main_prev_last_good
+        with BuildTransaction(main_worker) as tx:
+            stripped = dewater_build_in_place(main_worker)
+            dewatered = capture_digest(main_worker)
+            tx.rollback_verified(main_orig)
+            return stripped, dewatered
 
     def _eval_ref_phase2() -> tuple[dict[str, Any], dict[str, list[str]], dict[str, Any]]:
-        with ref_worker.lock:
-            try:
-                _apply_env_config(ref_worker, main_env)
-                env_aligned = capture_digest(ref_worker)
-            finally:
-                ref_worker.call("import_code", {"code": ref_snap, "mode": "replace"})
-                if hasattr(ref_worker, "last_good_code"):
-                    ref_worker.last_good_code = ref_prev_last_good
-
-            try:
-                stripped = dewater_build_in_place(ref_worker)
-                dewatered = capture_digest(ref_worker)
-                return env_aligned, stripped, dewatered
-            finally:
-                ref_worker.call("import_code", {"code": ref_snap, "mode": "replace"})
-                if hasattr(ref_worker, "last_good_code"):
-                    ref_worker.last_good_code = ref_prev_last_good
+        with BuildTransaction(ref_worker) as tx:
+            _apply_env_config(ref_worker, main_env)
+            env_aligned = capture_digest(ref_worker)
+            tx.restore()
+            stripped = dewater_build_in_place(ref_worker)
+            dewatered = capture_digest(ref_worker)
+            tx.rollback_verified(ref_orig)
+            return env_aligned, stripped, dewatered
 
     (main_stripped, main_dewatered), (ref_env_aligned, ref_stripped, ref_dewatered) = _run_worker_pair(
         main_worker,

@@ -895,12 +895,12 @@ def test_rank_gems_from_item_trigger_does_not_unlock_socketed_triggers() -> None
 
 
 def test_base64_source_label_compaction_and_graft_slot_resolution() -> None:
-    from pob_cli.bridge_client import BridgeWorker
+    from pob_cli.bridge_protocol import compact_source_label
 
     huge_b64 = "eNrt" + ("A" * 500)
-    assert BridgeWorker._compact_source_label(huge_b64) == f"share_code({len(huge_b64)} chars)"
-    assert BridgeWorker._compact_source_label("https://pobb.in/abc123") == "https://pobb.in/abc123"
-    assert BridgeWorker._compact_source_label("C:/pob/builds/test.xml") == "C:/pob/builds/test.xml"
+    assert compact_source_label(huge_b64) == f"share_code({len(huge_b64)} chars)"
+    assert compact_source_label("https://pobb.in/abc123") == "https://pobb.in/abc123"
+    assert compact_source_label("C:/pob/builds/test.xml") == "C:/pob/builds/test.xml"
 
     # Graft slot vs Body Armour disambiguation
     assert normalize_equipment_slot("body") == "Body Armour"

@@ -7,6 +7,7 @@ from typing import Any
 
 from ..bridge_client import BridgeWorker
 from ..guardrails import GuardrailScope, check_input, check_input_item_raw, validate_url
+from ..snapshot import BuildScope
 from .batch_ops_skills import (
     _op_add_group,
     _op_delete_group,
@@ -406,27 +407,32 @@ _BATCH_OP_HANDLERS: dict[str, _BatchOpHandler] = {
 }
 
 
-# Lua CoW snapshots restore only the active spec and sets of the build they came from, so ops
-# that switch or add a spec, item/skill/config set or loadout, or replace the build, need an
-# export_code checkpoint instead (a stale CoW restore would otherwise be refused mid-run).
-_LOSSLESS_OPS = frozenset({"new_build", "import_tree_url"})
+# How far each op reaches beyond the active spec and sets of the loaded build (`BuildScope`); the
+# transaction a batch or sweep runs in picks its checkpoint from the widest. Ops not listed stay
+# inside the active sets.
+_OP_SCOPES = {
+    "new_build": BuildScope.REPLACES_BUILD,
+    "import_tree_url": BuildScope.SETS,
+}
 _SET_SWITCH_KEYS = (
     "spec", "specIndex", "spec_index", "itemSet", "itemSetId", "item_set_id", "skillSet", "skillSetId",
     "skill_set_id", "configSet", "configSetId", "config_set_id", "loadout", "loadoutIndex", "loadout_index",
 )
 
 
-def ops_need_lossless_snapshot(ops: list[dict[str, Any]] | None) -> bool:
-    """Return True when any batch op switches/adds a set, spec or loadout, or replaces the build."""
-    for op in ops or []:
-        if not isinstance(op, dict):
-            continue
-        kind = str(op.get("op") or op.get("type") or op.get("action") or "").strip().lower().replace("-", "_")
-        if kind in _LOSSLESS_OPS:
-            return True
-        if kind == "switch_main" and any(op.get(k) is not None for k in _SET_SWITCH_KEYS):
-            return True
-    return False
+def op_scope(op: Any) -> BuildScope:
+    """The `BuildScope` of one batch op (switch_main reaches other sets only when it names one)."""
+    if not isinstance(op, dict):
+        return BuildScope.ACTIVE_SETS
+    kind = str(op.get("op") or op.get("type") or op.get("action") or "").strip().lower().replace("-", "_")
+    if kind == "switch_main" and any(op.get(k) is not None for k in _SET_SWITCH_KEYS):
+        return BuildScope.SETS
+    return _OP_SCOPES.get(kind, BuildScope.ACTIVE_SETS)
+
+
+def ops_scope(*op_lists: list[dict[str, Any]] | None) -> BuildScope:
+    """The widest `BuildScope` over every op of `op_lists`."""
+    return BuildScope.widest(op_scope(op) for ops in op_lists for op in ops or [])
 
 
 def _execute_batch_ops(

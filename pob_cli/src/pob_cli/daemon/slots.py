@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..bridge_client import BridgeWorker
 from ..errors import DaemonRequestError
+from ..snapshot import SlotHistory, history_of
 from ..updater import (
     OK_STATES,
     STATE_BOOTSTRAP_MISSING,
@@ -114,6 +115,9 @@ class DaemonManager:
         self._active_ops = 0
         self._reader_depths: dict[int, int] = {}
 
+        # A slot is its worker, its history and its lock; the history outlives the worker, so idle
+        # recycling and hot reload start a new worker on the same committed build and revision.
+        self._histories: dict[str, SlotHistory] = {}
         self._workers: dict[str, BridgeWorker] = {"main": self._new_worker("main")}
         self._slot_locks: dict[str, threading.RLock] = {"main": threading.RLock()}
         self.server: ThreadingHTTPServer | None = None
@@ -126,12 +130,19 @@ class DaemonManager:
     def _new_worker(self, slot_name: str) -> BridgeWorker:
         import pob_cli.daemon as _daemon_pkg
 
-        return _call_compat(
+        worker = _call_compat(
             _daemon_pkg.BridgeWorker,
             slot_name=slot_name,
             pob_dir=self.pob_dir,
             runtime_dir=self.runtime_dir,
         )
+        with self._lock:
+            history = self._histories.get(slot_name)
+            if history is None:
+                history = SlotHistory.load(slot_name, self.runtime_dir)
+                self._histories[slot_name] = history
+        history.bind(worker)
+        return worker
 
     @property
     def main_worker(self) -> BridgeWorker:
@@ -426,12 +437,12 @@ class DaemonManager:
         if busy:
             entry["busy"] = True
         if worker is not None:
-            entry["undoDepth"] = len(worker.undo_stack)
-            entry["redoDepth"] = len(worker.redo_stack)
+            history = history_of(worker)
+            entry.update(history.depths())
             if slot_name == "main":
                 entry["hello"] = worker.hello_info
-            if worker.source_label:
-                entry["sourceLabel"] = worker.source_label
+            if history.source_label:
+                entry["sourceLabel"] = history.source_label
         return entry
 
     def dispatch(self, action: str, params: dict[str, Any]) -> dict[str, Any]:
@@ -500,10 +511,6 @@ class DaemonManager:
                     if drift_warn and drift_warn not in str(exc):
                         raise DaemonRequestError(f"{drift_warn}\n{exc}") from exc
                     raise
-                if action in ("load", "undo", "redo") or (
-                    isinstance(res_slot, dict) and res_slot.get("applied") is True
-                ):
-                    self._bump_worker_rev(worker)
                 if drift_warn and isinstance(res_slot, dict):
                     res_slot.setdefault("slotDriftWarning", drift_warn)
                 if action in _STATE_META_ACTIONS:
@@ -511,22 +518,9 @@ class DaemonManager:
                 return res_slot
 
     @staticmethod
-    def _bump_worker_rev(w: BridgeWorker) -> int | None:
-        bump = getattr(w, "bump_rev", None)
-        if callable(bump):
-            new_rev = int(bump())
-            save = getattr(w, "save_slot_state", None)
-            if callable(save):
-                save()
-            return new_rev
-        return None
-
-    @staticmethod
     def _attach_state_meta(res: Any, w: BridgeWorker) -> Any:
         if isinstance(res, dict):
-            raw_rev = getattr(w, "rev", None)
-            if isinstance(raw_rev, int) and not isinstance(raw_rev, bool):
-                res.setdefault("rev", raw_rev)
+            res.setdefault("rev", history_of(w).rev)
             slot_nm = getattr(w, "slot_name", None)
             if isinstance(slot_nm, str) and slot_nm:
                 res.setdefault("targetSlot", slot_nm)

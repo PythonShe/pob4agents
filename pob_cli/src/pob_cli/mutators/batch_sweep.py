@@ -10,18 +10,13 @@ from ..bridge_client import BridgeWorker
 from ..errors import CrossGameHallucinationError
 from ..guardrails import GuardrailScope, check_input
 from ..snapshot import (
-    BuildSnapshot,
+    BuildTransaction,
     capture_direct_digest,
     diff_digest,
-    drop_snapshot,
-    fall_back_to_code,
-    restore_snapshot,
     run_mutation,
     supports_direct_calc,
-    take_snapshot,
-    verify_cow_restored,
 )
-from .batch_ops import _execute_batch_ops, ops_need_lossless_snapshot
+from .batch_ops import _execute_batch_ops, ops_scope
 from .common import _BatchCache, _call_compat, _merge_cautions, _normalize_keep_list
 from .sweep_report import _compact_sweep_summary, _extract_compact_calcs
 
@@ -132,33 +127,13 @@ def run_batch(
     sections = _normalize_return_sections(return_sections)
 
     if apply and no_undo:
-        with worker.lock:
-            fallback_code = getattr(worker, "last_good_code", None)
-            if not fallback_code:
-                fallback_code = str(worker.call("export_code", {}).get("code") or "") or None
+        with BuildTransaction(worker, scope=ops_scope(ops), will_commit=True) as tx:
             cache = _BatchCache(worker)
-            try:
-                step_results = _execute_batch_ops(worker, ops, cache)
-                digest_after = _mut.capture_digest(worker)
-                returns_map = _collect_return_sections(worker, sections, keep=keep) if sections else None
-            except Exception:
-                if fallback_code:
-                    try:
-                        worker.call("import_code", {"code": fallback_code, "mode": "replace"})
-                    except Exception:
-                        pass
-                raise
-
-            if returns_map and isinstance(returns_map.get("export"), str) and returns_map["export"]:
-                snap_after = returns_map["export"]
-            else:
-                snap_after = str(worker.call("export_code", {}).get("code") or "")
-            if snap_after:
-                worker.last_good_code = snap_after
-            worker.redo_stack.clear()
-            save_fn = getattr(worker, "save_slot_state", None)
-            if callable(save_fn):
-                save_fn()
+            step_results = _execute_batch_ops(worker, ops, cache)
+            digest_after = _mut.capture_digest(worker)
+            returns_map = _collect_return_sections(worker, sections, keep=keep) if sections else None
+            exported = returns_map.get("export") if returns_map else None
+            tx.commit(undoable=False, after_code=exported if isinstance(exported, str) and exported else None)
 
             batch_cautions: list[str] = []
             for st in step_results:
@@ -177,8 +152,7 @@ def run_batch(
                     "points": digest_after.get("buildInfo", {}).get("points", {}),
                 },
                 "diff": None,
-                "undoDepth": len(worker.undo_stack),
-                "redoDepth": len(worker.redo_stack),
+                **tx.history.depths(),
             }
             if batch_cautions:
                 result["cautions"] = batch_cautions
@@ -202,7 +176,7 @@ def run_batch(
             detail["cautions"] = batch_cautions
         return detail
 
-    res = run_mutation(worker, _do_batch, apply=apply, lossless=ops_need_lossless_snapshot(ops))
+    res = run_mutation(worker, _do_batch, apply=apply, scope=ops_scope(ops))
     cautions = (res.get("detail") or {}).get("cautions")
     if cautions:
         res["cautions"] = list(cautions)
@@ -211,33 +185,48 @@ def run_batch(
     return res
 
 
-def _sweep_needs_lossless(base_ops: list[dict[str, Any]] | None, variants: list[dict[str, Any]]) -> bool:
-    if ops_need_lossless_snapshot(base_ops):
-        return True
-    return any(
-        isinstance(v, dict) and isinstance(v.get("ops"), list) and ops_need_lossless_snapshot(v["ops"])
-        for v in variants
-    )
+def _sweep_keep(keep: Iterable[str] | str | None, scenario: str | dict[str, Any] | None) -> list[str] | None:
+    merged_keep: list[str] = []
+    for tok in _normalize_keep_list(keep):
+        if tok not in merged_keep:
+            merged_keep.append(tok)
+    if isinstance(scenario, dict) and scenario.get("keep") is not None:
+        for tok in _normalize_keep_list(scenario.get("keep")):
+            if tok not in merged_keep:
+                merged_keep.append(tok)
+    return merged_keep or None
 
 
-def _final_restore_check(
+def _sweep_variant(
     worker: BridgeWorker,
-    orig_snap: BuildSnapshot,
-    orig_digest: dict[str, Any] | None,
-    restore_note: str | None,
+    tx: BuildTransaction,
+    var: dict[str, Any],
+    v_name: str,
+    base_digest: dict[str, Any],
+    kw_list: list[str],
+    use_direct: bool,
 ) -> dict[str, Any]:
-    """Verify the original build came back, re-importing its saved code when a CoW restore drifted."""
-    if orig_snap.kind == "cow":
-        check = verify_cow_restored(worker, orig_digest or {})
-        if check.get("verified") or not orig_snap.fallback_code:
-            return check
-        restore_note = fall_back_to_code(worker, orig_snap, f"CoW restore drifted ({check.get('detail')})")
-    from ..analyzer import verify_restored
+    """Run one variant's ops on the base build and measure it; raises on a bad variant."""
+    import pob_cli.mutators as _mut
 
-    check = verify_restored(worker, orig_snap.token, orig_digest or {})
-    if restore_note:
-        check["fallback"] = restore_note
-    return check
+    v_ops = var.get("ops") or []
+    if not isinstance(v_ops, list):
+        raise ValueError(f"Variant '{v_name}' 'ops' must be a list of batch operations.")
+    step_results = _execute_batch_ops(worker, v_ops, _BatchCache(worker)) if v_ops else []
+    v_digest = capture_direct_digest(worker, base_digest=base_digest) if use_direct else _mut.capture_digest(worker)
+    entry: dict[str, Any] = {
+        "name": v_name,
+        "ok": True,
+        "steps": step_results,
+        "summary": _compact_sweep_summary(v_digest),
+        "diffVsBase": diff_digest(base_digest, v_digest),
+        "warnings": v_digest.get("warnings", []),
+    }
+    if kw_list:
+        # get_calcs reads the calc output of the last engine frame, which a lazy restore left stale.
+        tx.fresh()
+        entry["calcs"] = _extract_compact_calcs(worker, kw_list)
+    return entry
 
 
 def run_sweep(
@@ -263,166 +252,92 @@ def run_sweep(
     for kw in kw_list:
         check_input(kw, scope=GuardrailScope.CALC_QUERY, expected_game="poe1")
 
-    merged_keep: list[str] = []
-    for tok in _normalize_keep_list(keep):
-        if tok not in merged_keep:
-            merged_keep.append(tok)
-    if isinstance(scenario, dict) and scenario.get("keep") is not None:
-        for tok in _normalize_keep_list(scenario.get("keep")):
-            if tok not in merged_keep:
-                merged_keep.append(tok)
-    eff_keep: list[str] | None = merged_keep or None
-    lossless = _sweep_needs_lossless(base_ops, variants)
+    eff_keep = _sweep_keep(keep, scenario)
+    variant_ops = [v["ops"] for v in variants if isinstance(v, dict) and isinstance(v.get("ops"), list)]
+    scope = ops_scope(base_ops, *variant_ops)
+    has_scenario = scenario is not None and (not isinstance(scenario, str) or bool(scenario.strip()))
 
-    with worker.lock:
-        prev_last_good = getattr(worker, "last_good_code", None)
+    with BuildTransaction(worker, scope=scope) as tx:
+        assert tx.base is not None
         use_direct = supports_direct_calc(worker)
-        orig_snap = take_snapshot(worker, prefer_cow=not lossless)
-        base_snap = orig_snap
         results: list[dict[str, Any]] = []
         base_steps: list[dict[str, Any]] = []
         scenario_applied: dict[str, Any] | None = None
         orig_digest: dict[str, Any] | None = None
         fallbacks: list[str] = []
-        will_mutate_base = bool(base_ops) or (
-            scenario is not None and (not isinstance(scenario, str) or scenario.strip())
-        )
 
-        try:
-            pending: BaseException | None = None
+        if base_ops or has_scenario:
+            orig_digest = (
+                capture_direct_digest(worker) if (use_direct and tx.base.kind == "cow") else _mut.capture_digest(worker)
+            )
+        if base_ops:
+            base_steps = _execute_batch_ops(worker, base_ops, _BatchCache(worker))
+        if has_scenario:
+            from ..comparator import _apply_matrix_scenario_in_place, _parse_matrix_scenario
+
+            plan = _parse_matrix_scenario(scenario)
+            scenario_applied = _call_compat(_apply_matrix_scenario_in_place, worker, plan, keep=eff_keep)
+        base_cp = tx.checkpoint() if (base_ops or has_scenario) else tx.base
+
+        full_base = _mut.capture_digest(worker)
+        if orig_digest is None:
+            orig_digest = full_base
+        # Variants are measured by direct_calc, so their baseline must come from the same pass.
+        base_digest = capture_direct_digest(worker, base_digest=full_base) if use_direct else full_base
+        base_calcs = _extract_compact_calcs(worker, kw_list) if kw_list else None
+
+        dirty = False
+        for idx, var in enumerate(variants):
+            if not isinstance(var, dict):
+                results.append(
+                    {
+                        "name": f"Variant {idx + 1}",
+                        "ok": False,
+                        "error": f"Variant entry #{idx + 1} must be a JSON object.",
+                    }
+                )
+                continue
+            v_name = str(var.get("name") or f"Variant {idx + 1}").strip()
+            if dirty:
+                # direct_calc recalculates on its own, so the restore can leave the calc output stale.
+                note = tx.restore(base_cp, rebuild=not use_direct)
+                if note:
+                    fallbacks.append(f"before '{v_name}': {note}")
+            dirty = bool(var.get("ops"))
             try:
-                if will_mutate_base:
-                    orig_digest = (
-                        capture_direct_digest(worker)
-                        if (use_direct and orig_snap.kind == "cow")
-                        else _mut.capture_digest(worker)
-                    )
-
-                mutated_base = False
-
-                if base_ops:
-                    base_steps = _execute_batch_ops(worker, base_ops, _BatchCache(worker))
-                    mutated_base = True
-
-                if scenario is not None and (not isinstance(scenario, str) or scenario.strip()):
-                    from ..comparator import _apply_matrix_scenario_in_place, _parse_matrix_scenario
-
-                    plan = _parse_matrix_scenario(scenario)
-                    scenario_applied = _call_compat(
-                        _apply_matrix_scenario_in_place, worker, plan, keep=eff_keep
-                    )
-                    mutated_base = True
-
-                if mutated_base:
-                    upd_ckpt = getattr(worker, "update_checkpoint", None)
-                    if callable(upd_ckpt):
-                        upd_ckpt()
-                    base_snap = take_snapshot(worker, prefer_cow=not lossless)
-
-                full_base = _mut.capture_digest(worker)
-                if orig_digest is None:
-                    orig_digest = full_base
-                # Variants are measured by direct_calc, so their baseline must come from the same pass.
-                base_digest = capture_direct_digest(worker, base_digest=full_base) if use_direct else full_base
-                base_calcs = _extract_compact_calcs(worker, kw_list) if kw_list else None
-
-                dirty = False
-                for idx, var in enumerate(variants):
-                    if not isinstance(var, dict):
-                        results.append(
-                            {
-                                "name": f"Variant {idx + 1}",
-                                "ok": False,
-                                "error": f"Variant entry #{idx + 1} must be a JSON object.",
-                            }
-                        )
-                        continue
-
-                    v_name = str(var.get("name") or f"Variant {idx + 1}").strip()
-                    v_ops = var.get("ops") or []
-
-                    if dirty:
-                        note = restore_snapshot(worker, base_snap, rebuild=not use_direct)
-                        if note:
-                            fallbacks.append(f"before '{v_name}': {note}")
-                        dirty = False
-
-                    try:
-                        if not isinstance(v_ops, list):
-                            raise ValueError(f"Variant '{v_name}' 'ops' must be a list of batch operations.")
-                        step_results: list[dict[str, Any]] = []
-                        if v_ops:
-                            dirty = True
-                            step_results = _execute_batch_ops(worker, v_ops, _BatchCache(worker))
-
-                        v_digest = (
-                            capture_direct_digest(worker, base_digest=base_digest)
-                            if use_direct
-                            else _mut.capture_digest(worker)
-                        )
-                        v_diff = diff_digest(base_digest, v_digest)
-                        v_calcs = _extract_compact_calcs(worker, kw_list) if kw_list else None
-
-                        entry: dict[str, Any] = {
-                            "name": v_name,
-                            "ok": True,
-                            "steps": step_results,
-                            "summary": _compact_sweep_summary(v_digest),
-                            "diffVsBase": v_diff,
-                            "warnings": v_digest.get("warnings", []),
-                        }
-                        if v_calcs is not None:
-                            entry["calcs"] = v_calcs
-                        results.append(entry)
-                    except CrossGameHallucinationError:
-                        dirty = True
-                        raise
-                    except Exception as exc:
-                        dirty = True
-                        results.append({"name": v_name, "ok": False, "error": str(exc)})
-            except BaseException as exc:
-                pending = exc
+                results.append(_sweep_variant(worker, tx, var, v_name, base_digest, kw_list, use_direct))
+            except CrossGameHallucinationError:
                 raise
-            finally:
-                if base_snap is not orig_snap:
-                    drop_snapshot(worker, base_snap)
-                restore_note: str | None = None
-                try:
-                    restore_note = restore_snapshot(worker, orig_snap, drop=True)
-                except Exception as restore_exc:
-                    if pending is None:
-                        raise
-                    pending.add_note(f"Restoring the original build also failed: {restore_exc}")
+            except Exception as exc:
+                dirty = True
+                results.append({"name": v_name, "ok": False, "error": str(exc)})
 
-            restore_check = _final_restore_check(worker, orig_snap, orig_digest, restore_note)
-            if restore_check.get("fallback"):
-                fallbacks.append(str(restore_check["fallback"]))
-        finally:
-            if hasattr(worker, "last_good_code"):
-                worker.last_good_code = prev_last_good
+        restore_check = tx.rollback_verified(orig_digest)
+        if restore_check.get("fallback"):
+            fallbacks.append(str(restore_check["fallback"]))
 
-        baseline_payload: dict[str, Any] = {
-            "summary": _compact_sweep_summary(base_digest),
-            "warnings": base_digest.get("warnings", []),
-        }
-        if base_calcs is not None:
-            baseline_payload["calcs"] = base_calcs
+    baseline_payload: dict[str, Any] = {
+        "summary": _compact_sweep_summary(base_digest),
+        "warnings": base_digest.get("warnings", []),
+    }
+    if base_calcs is not None:
+        baseline_payload["calcs"] = base_calcs
 
-        out: dict[str, Any] = {
-            "scenario": scenario,
-            "scenarioApplied": scenario_applied,
-            "baseOpsCount": len(base_ops or []),
-            "baseSteps": base_steps,
-            "calcKeywords": kw_list,
-            "baseline": baseline_payload,
-            "variants": results,
-            "succeeded": sum(1 for r in results if r.get("ok")),
-            "failed": sum(1 for r in results if not r.get("ok")),
-            "restoreCheck": restore_check,
-        }
-        if fallbacks:
-            out["restoreFallbacks"] = fallbacks
-        return out
+    out: dict[str, Any] = {
+        "scenario": scenario,
+        "scenarioApplied": scenario_applied,
+        "baseOpsCount": len(base_ops or []),
+        "baseSteps": base_steps,
+        "calcKeywords": kw_list,
+        "baseline": baseline_payload,
+        "variants": results,
+        "succeeded": sum(1 for r in results if r.get("ok")),
+        "failed": sum(1 for r in results if not r.get("ok")),
+        "restoreCheck": restore_check,
+    }
+    if fallbacks:
+        out["restoreFallbacks"] = fallbacks
+    return out
 
 
 def trade_eval_items(

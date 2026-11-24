@@ -13,6 +13,7 @@ import pytest
 
 import pob_cli.bridge_client as bc
 from pob_cli.bridge_client import BridgeError, BridgeRejectedError, BridgeTimeoutError, BridgeWorker
+from pob_cli.snapshot import SlotHistory
 
 # A request the fake engine never answers, so the caller hits its RPC timeout.
 _Hang = Callable[[str, dict[str, Any]], bool]
@@ -133,9 +134,8 @@ def test_hanging_saved_build_boots_empty_without_nested_restarts(
 def test_bad_slot_file_is_skipped_on_the_next_boot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     engine = _Engine(lambda m, p: m == "import_code" and p.get("code") == "BADCODE")
     w = _worker(tmp_path, monkeypatch, engine)
-    w.last_good_code = "BADCODE"
-    w.save_slot_state()
-    w.last_good_code = None
+    SlotHistory("main", w.runtime_dir).load_build("BADCODE", None)
+    SlotHistory.load("main", w.runtime_dir).bind(w)
     w.start()
     assert w.restore_failed is not None
     w.stop()
@@ -143,6 +143,7 @@ def test_bad_slot_file_is_skipped_on_the_next_boot(tmp_path: Path, monkeypatch: 
     # A new daemon reads the same slot file: the code that hung is not tried again.
     launches = engine.launches
     w2 = BridgeWorker(slot_name="main", pob_dir=w.pob_root, runtime_dir=tmp_path / "rt")
+    SlotHistory.load("main", w2.runtime_dir).bind(w2)
     w2.start()
     assert engine.launches == launches + 1
     assert _imports(engine, "BADCODE") == 1

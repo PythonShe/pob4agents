@@ -444,8 +444,6 @@ def test_batch_item_edit_empty_slot_returns_request_error_kind_and_exit_1(
         def __init__(self) -> None:
             self.lock = threading.RLock()
             self.last_good_code = "SNAP_1"
-            self.undo_stack: list[str] = []
-            self.redo_stack: list[str] = []
             self.slot_name = "main"
 
         def ensure_alive(self) -> None:
@@ -659,7 +657,7 @@ def test_run_sweep_computes_and_returns_restore_check() -> None:
     class _SweepWorker:
         def __init__(self, *, break_restore: bool = False) -> None:
             self.lock = threading.RLock()
-            self.last_good_code = "SENTINEL_GOOD"
+            self.last_good_code = "CODE_100000"  # the committed build is the live one
             self.dps = 100_000.0
             self.break_restore = break_restore
             self.export_calls_order: list[str] = []
@@ -702,7 +700,7 @@ def test_run_sweep_computes_and_returns_restore_check() -> None:
         base_ops=[{"op": "config", "set": {"usePowerCharges": True}}],
     )
     assert res_ok["restoreCheck"]["verified"] is True
-    assert w_ok.last_good_code == "SENTINEL_GOOD"
+    assert w_ok.last_good_code == "CODE_100000"
 
     # 2. Failed rollback surfaces restoreCheck.verified == False with differing stats
     w_bad = _SweepWorker(break_restore=True)
@@ -712,7 +710,7 @@ def test_run_sweep_computes_and_returns_restore_check() -> None:
     )
     assert res_bad["restoreCheck"]["verified"] is False
     assert "CombinedDPS" in res_bad["restoreCheck"].get("differing", [])
-    assert w_bad.last_good_code == "SENTINEL_GOOD"
+    assert w_bad.last_good_code == "CODE_100000"
 
 
 @pytest.mark.parametrize(
@@ -790,10 +788,7 @@ def test_pob_load_missing_at_file_and_invalid_share_code_exit_1(
         def __init__(self) -> None:
             self.lock = threading.RLock()
             self.last_good_code = None
-            self.undo_stack: list[str] = []
-            self.redo_stack: list[str] = []
             self.slot_name = "main"
-            self.source_label = None
 
         def ensure_alive(self) -> None:
             return None

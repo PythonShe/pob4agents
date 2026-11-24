@@ -63,8 +63,6 @@ def dispatch_dual_slot_action(
         cmp_res = compare_builds(
             mw, rw, ref_source=params.get("ref_source"), ref_xml_code=params.get("ref_xml_code")
         )
-        if params.get("ref_source") or params.get("ref_xml_code"):
-            manager._bump_worker_rev(rw)
         return manager._attach_state_meta(cmp_res, mw)
 
     if action == "borrow":
@@ -81,8 +79,6 @@ def dispatch_dual_slot_action(
             skill_group=params.get("skill_group"),
             apply=bool(params.get("apply", False)),
         )
-        if isinstance(b_res, dict) and b_res.get("applied") is True:
-            manager._bump_worker_rev(mw)
         return manager._attach_state_meta(b_res, mw)
 
     if action == "diagnose":
@@ -121,10 +117,10 @@ def dispatch_dual_slot_action(
 
 
 def _h_load(m: DaemonManager, params: dict[str, Any], w: BridgeWorker) -> dict[str, Any]:
-    from ..importers import load_build_into_worker
+    from ..snapshot import load_build
 
     try:
-        load_res = load_build_into_worker(
+        load_res = load_build(
             w,
             source=params.get("source"),
             xml_code=params.get("xml_code"),
@@ -193,13 +189,13 @@ def _h_audit(_m: DaemonManager, params: dict[str, Any], w: BridgeWorker) -> dict
 
 def _h_diagnose(m: DaemonManager, params: dict[str, Any], w: BridgeWorker) -> dict[str, Any]:
     from ..analyzer import diagnose_build
-    from ..importers import load_build_into_worker
+    from ..snapshot import load_build
 
     src = params.get("source")
     xml_code = params.get("xml_code")
     load_meta: dict[str, Any] = {}
     if src or xml_code or (params.get("realm") and str(params.get("realm")).lower() == "cn"):
-        load_meta = load_build_into_worker(
+        load_meta = load_build(
             w,
             source=src,
             xml_code=xml_code,
@@ -207,7 +203,6 @@ def _h_diagnose(m: DaemonManager, params: dict[str, Any], w: BridgeWorker) -> di
             league=params.get("league"),
             realm=params.get("realm"),
         )
-        m._bump_worker_rev(w)
     top_val = int(params["top"]) if params.get("top") is not None else 5
     diag_res = diagnose_build(
         w,

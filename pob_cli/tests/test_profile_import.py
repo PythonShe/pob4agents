@@ -43,13 +43,7 @@ class _FakeWorker:
         self.pob_root = None
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.last_good_code: str | None = None
-        self.source_label: str | None = None
-        self.undo_stack: list[str] = []
-        self.redo_stack: list[str] = []
         self._import_count = 0
-
-    def save_slot_state(self) -> None:
-        pass
 
     def call(self, method: str, params: dict[str, Any] | None = None, timeout: float | None = None) -> dict[str, Any]:
         p = dict(params or {})
