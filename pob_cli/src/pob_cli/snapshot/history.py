@@ -60,6 +60,9 @@ class SlotHistory:
         self.rev += 1
         if self._worker is not None:
             self._worker.last_good_code = self.committed
+            if getattr(self._worker, "restore_failed", None) is not None:
+                # A new committed build replaces the one put aside at boot.
+                self._worker.restore_failed = None
         self.save()
 
     def save(self) -> None:

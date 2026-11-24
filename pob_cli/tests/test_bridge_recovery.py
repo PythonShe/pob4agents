@@ -360,3 +360,16 @@ def test_batch_rejection_is_classified_through_the_table(tmp_path: Path, monkeyp
     results = w.call_batch([("import_code", {"code": "NEWCODE", "mode": "replace"})], raise_on_error=False)
     assert results[0]["ok"] is False and "not a Path of Building code" in results[0]["error"]
     w.stop()
+
+
+def test_a_later_import_does_not_clear_a_put_aside_build(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # A what-if rollback re-imports the empty build while the saved one is still put aside: only a
+    # committed new build (SlotHistory) ends the put-aside state.
+    engine = _Engine(lambda m, p: m == "import_code" and p.get("code") == "BADCODE")
+    w = _worker(tmp_path, monkeypatch, engine)
+    w.last_good_code = "BADCODE"
+    w.start()
+    assert w.restore_failed is not None
+    w.call("import_code", {"code": "EMPTYBUILD", "mode": "replace"})
+    assert w.restore_failed is not None
+    w.stop()

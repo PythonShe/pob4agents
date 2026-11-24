@@ -162,6 +162,33 @@ def test_status_reports_a_build_put_aside_at_boot(tmp_path: Path, monkeypatch: p
     assert mgr._slot_status_entry("main", mgr.main_worker)["restoreFailed"] == failed
 
 
+@pytest.mark.parametrize("commit", ["apply", "no_undo", "load", "undo"])
+def test_committing_a_new_build_ends_a_put_aside_restore(commit: str) -> None:
+    w = _CowFakeWorker(caps=_CAPS)
+    if commit == "undo":
+        run_mutation(w, _set_dps(5.0), apply=True)
+    w.restore_failed = {"error": "Engine failed to parse treeVersion 3_99"}  # type: ignore[attr-defined]
+    if commit == "apply":
+        run_mutation(w, _set_dps(5.0), apply=True)
+    elif commit == "no_undo":
+        run_batch(w, [{"op": "config", "set": {"usePowerCharges": True}}], apply=True, no_undo=True)
+    elif commit == "load":
+        load_build(w, xml_code=_CowFakeWorker(caps={})._serialize())
+    else:
+        undo_build(w)
+    assert w.restore_failed is None  # type: ignore[attr-defined]
+
+
+def test_what_if_keeps_a_put_aside_restore() -> None:
+    w = _CowFakeWorker(caps=_CAPS)
+    failed = {"error": "Engine failed to parse treeVersion 3_99"}
+    w.restore_failed = failed  # type: ignore[attr-defined]
+    run_mutation(w, _set_dps(5.0), apply=False, scope=BuildScope.SETS)
+    with pytest.raises(DaemonRequestError):
+        undo_build(w)
+    assert w.restore_failed is failed  # type: ignore[attr-defined]
+
+
 def test_slot_history_survives_a_daemon_restart(tmp_path: Path) -> None:
     h = SlotHistory("boss", tmp_path)
     h.load_build("CODE_A", "https://pobb.in/abc")

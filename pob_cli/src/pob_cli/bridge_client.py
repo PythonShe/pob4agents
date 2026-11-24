@@ -509,9 +509,7 @@ class BridgeWorker:
                 self.ensure_alive()  # so only a restart the import itself causes changes generation
                 generation = self.generation
                 try:
-                    res = self._raw_call_unlocked(method, params, timeout=timeout)
-                    self.restore_failed = None
-                    return res
+                    return self._raw_call_unlocked(method, params, timeout=timeout)
                 except BridgeError as exc:
                     if self.generation == generation:  # else a restart already restored last_good_code
                         self._restore_after_failed_import_unlocked()
