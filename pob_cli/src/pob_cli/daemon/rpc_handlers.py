@@ -9,7 +9,7 @@ from ..bridge_client import BridgeError, BridgeWorker
 from ..bridge_protocol import get_worker_caps
 from ..errors import CrossGameHallucinationError, DaemonRequestError
 from .rpc_mutate import MUTATE_ACTION_HANDLERS, norm_keep
-from .runtime import _call_compat, normalize_slot_name
+from .runtime import normalize_slot_name
 
 if TYPE_CHECKING:
     from .slots import DaemonManager
@@ -27,9 +27,8 @@ def dispatch_game_data(manager: DaemonManager, params: dict[str, Any]) -> dict[s
         game_data.ensure_gamedata_index(pob_dir=pob_dir, runtime_dir=rt_dir, force_rebuild=True)
     queries = params.get("queries")
     limit_val = int(params["limit"]) if params.get("limit") is not None else 25
-    if isinstance(queries, list) and len(queries) > 1 and hasattr(game_data, "query_multi"):
-        return _call_compat(
-            game_data.query_multi,
+    if isinstance(queries, list) and len(queries) > 1:
+        return game_data.query_multi(
             db=None,
             kind=str(params.get("kind") or ""),
             queries=[str(q) for q in queries],
@@ -183,14 +182,13 @@ def _h_redo(_m: DaemonManager, _p: dict[str, Any], w: BridgeWorker) -> dict[str,
 def _h_summary(m: DaemonManager, _p: dict[str, Any], w: BridgeWorker) -> dict[str, Any]:
     from .. import analyzer
 
-    fn = getattr(analyzer, "extract_summary", None) or analyzer.get_summary
-    return m._attach_warning_if_degraded(fn(w))
+    return m._attach_warning_if_degraded(analyzer.extract_summary(w))
 
 
 def _h_audit(_m: DaemonManager, params: dict[str, Any], w: BridgeWorker) -> dict[str, Any]:
     from ..analyzer import audit_build
 
-    return _call_compat(audit_build, w, keep=norm_keep(params), attribution=bool(params.get("attribution", True)))
+    return audit_build(w, keep=norm_keep(params), attribution=bool(params.get("attribution", True)))
 
 
 def _h_diagnose(m: DaemonManager, params: dict[str, Any], w: BridgeWorker) -> dict[str, Any]:
@@ -253,8 +251,7 @@ def _h_skills(_m: DaemonManager, params: dict[str, Any], w: BridgeWorker) -> dic
 def _h_tree(_m: DaemonManager, params: dict[str, Any], w: BridgeWorker) -> dict[str, Any]:
     from ..analyzer import inspect_tree
 
-    return _call_compat(
-        inspect_tree,
+    return inspect_tree(
         w,
         search=params.get("search"),
         queries=params.get("queries"),
@@ -277,8 +274,7 @@ def _h_config_list(_m: DaemonManager, params: dict[str, Any], w: BridgeWorker) -
     from ..analyzer import inspect_config
 
     show_all = bool(params.get("includeDefaults", params.get("include_defaults", params.get("show_all", False))))
-    return _call_compat(
-        inspect_config,
+    return inspect_config(
         w,
         include_defaults=show_all,
         show_all=show_all,
@@ -288,16 +284,14 @@ def _h_config_list(_m: DaemonManager, params: dict[str, Any], w: BridgeWorker) -
 
 
 def _h_calc(_m: DaemonManager, params: dict[str, Any], w: BridgeWorker) -> dict[str, Any]:
-    from .. import analyzer
+    from ..analyzer import search_calcs_breakdown
 
-    fn = getattr(analyzer, "search_calcs_breakdown", None) or analyzer.inspect_calcs
     keywords = params.get("keywords")
     keyword = params.get("keyword")
     if keyword is None and isinstance(keywords, list) and keywords:
         keyword = str(keywords[0])
     limit_val = int(params["limit"]) if params.get("limit") is not None else 20
-    return _call_compat(
-        fn,
+    return search_calcs_breakdown(
         w,
         keyword=str(keyword or ""),
         keywords=keywords,
@@ -309,7 +303,7 @@ def _h_calc(_m: DaemonManager, params: dict[str, Any], w: BridgeWorker) -> dict[
 def _h_matrix(_m: DaemonManager, params: dict[str, Any], w: BridgeWorker) -> dict[str, Any]:
     from ..comparator import run_matrix
 
-    return _call_compat(run_matrix, w, scenarios=params.get("scenarios"), full=bool(params.get("full", False)), keep=norm_keep(params))
+    return run_matrix(w, scenarios=params.get("scenarios"), full=bool(params.get("full", False)), keep=norm_keep(params))
 
 
 def _h_rank_nodes(_m: DaemonManager, params: dict[str, Any], w: BridgeWorker) -> dict[str, Any]:
