@@ -328,11 +328,19 @@ def test_e2e_v02_degraded_network_alert_and_bootstrap_missing(tmp_path: Path) ->
     }
     try:
         t0 = time.monotonic()
-        proc_json = _run_pob_proc("status", "--json", runtime_dir=degraded_rt, extra_env=dead_proxy_env, check=True)
-        elapsed = time.monotonic() - t0
+        # status never waits for the boot update check, so it can report "checking" first; a refused
+        # connection to the dead proxy takes longer to fail on Windows than on macOS/Linux.
+        while True:
+            proc_json = _run_pob_proc(
+                "status", "--json", runtime_dir=degraded_rt, extra_env=dead_proxy_env, check=True
+            )
+            data = json.loads(proc_json.stdout)
+            elapsed = time.monotonic() - t0
+            if data["updateStatus"].get("state") != "checking" or elapsed >= 10.0:
+                break
+            time.sleep(0.25)
         assert elapsed < 10.0, f"Degraded daemon cold start took too long: {elapsed:.2f}s"
 
-        data = json.loads(proc_json.stdout)
         assert data["updateStatus"]["state"] == "degraded_network_error"
         assert data.get("updateWarning")
         assert "--proxy" in data["updateWarning"] or "HTTPS_PROXY" in data["updateWarning"]
