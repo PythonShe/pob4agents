@@ -373,44 +373,33 @@ def await_startup_handshake(
     return hello_info, pob_version, bridge_version
 
 
-def restore_build_on_start(
-    raw_call: Callable[[str, dict[str, Any], float], dict[str, Any]],
-    target_code: str,
-    build_loaded: Any,
-) -> bool:
-    """Restore a saved build code during startup, skipping redundant new_build{} when possible (R4)."""
-    if build_loaded is False:
-        raw_call("new_build", {}, 10.0)
-        try:
-            raw_call("import_code", {"code": target_code, "mode": "replace"}, 15.0)
-            return True
-        except Exception:
-            try:
-                raw_call("new_build", {}, 10.0)
-            except Exception:
-                pass
-            return False
-
-    try:
-        raw_call("import_code", {"code": target_code, "mode": "new"}, 15.0)
-        return True
-    except Exception as exc:
-        if "no build is loaded" in str(exc).lower():
-            try:
-                raw_call("new_build", {}, 10.0)
-                raw_call("import_code", {"code": target_code, "mode": "replace"}, 15.0)
-                return True
-            except Exception:
-                try:
-                    raw_call("new_build", {}, 10.0)
-                except Exception:
-                    pass
-                return False
-        try:
-            raw_call("new_build", {}, 10.0)
-        except Exception:
-            pass
-        return False
+def sync_worker_state(
+    worker: Any,
+    method: str,
+    params: dict[str, Any] | None,
+    result: dict[str, Any],
+) -> None:
+    """Mirror locale and translation state an RPC result reports onto the worker."""
+    if method in ("set_translate", "set_locale"):
+        # tree_data carries translated names (nameZh), so a language switch must refetch it.
+        worker._tree_data_cache.clear()
+    if method == "set_translate":
+        if isinstance(result.get("enabled"), bool):
+            worker.translate_enabled = result["enabled"]
+        elif isinstance(result.get("translate"), bool):
+            worker.translate_enabled = result["translate"]
+        elif params is not None and "enabled" in params:
+            worker.translate_enabled = bool(params["enabled"])
+    elif method == "set_locale":
+        if isinstance(result.get("lang"), str):
+            worker.locale = result["lang"]
+        if isinstance(result.get("translate"), bool):
+            worker.translate_enabled = result["translate"]
+        elif isinstance(result.get("enabled"), bool):
+            worker.translate_enabled = result["enabled"]
+    elif method == "version":
+        if isinstance(result.get("translate"), bool):
+            worker.translate_enabled = result["translate"]
 
 
 def collect_batch_responses(

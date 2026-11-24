@@ -1,0 +1,198 @@
+"""BridgeWorker crash and timeout recovery: one bounded owner, no nested boots, bad codes put aside."""
+
+from __future__ import annotations
+
+import io
+import json
+import queue
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+import pob_cli.bridge_client as bc
+from pob_cli.bridge_client import BridgeError, BridgeTimeoutError, BridgeWorker
+
+# A request the fake engine never answers, so the caller hits its RPC timeout.
+_Hang = Callable[[str, dict[str, Any]], bool]
+
+
+class _Engine:
+    """Fake engine processes sharing one request log; `hang` decides which requests never get an answer."""
+
+    def __init__(self, hang: _Hang, *, max_launches: int = 40) -> None:
+        self.hang = hang
+        self.launches = 0
+        self.max_launches = max_launches
+        self.sent: list[tuple[int, str, Any]] = []
+
+    def popen(self, *_a: Any, **_kw: Any) -> Any:
+        self.launches += 1
+        if self.launches > self.max_launches:
+            raise OSError("launch cap reached")
+        return _Proc(self, self.launches)
+
+
+class _Proc:
+    def __init__(self, engine: _Engine, launch: int) -> None:
+        self.engine = engine
+        self.launch = launch
+        self.stderr = io.StringIO("")
+        self.stdin = self
+        self._alive = True
+        self._q: queue.Queue[str | None] = queue.Queue()
+        self._q.put(json.dumps({"event": "gate_result", "data": {"ok": True}}) + "\n")
+        self._q.put(json.dumps({"event": "hello", "data": {"pobVersion": "2.69.0", "buildLoaded": True}}) + "\n")
+        self.stdout = iter(self._q.get, None)
+
+    def write(self, data: str) -> int:
+        for line in data.splitlines():
+            if not line.strip():
+                continue
+            req = json.loads(line)
+            method, params = req["method"], req.get("params") or {}
+            self.engine.sent.append((self.launch, method, params.get("code")))
+            if self.engine.hang(method, params):
+                continue
+            result = {"caps": {}, "pobVersion": "2.69.0"} if method == "version" else {}
+            self._q.put(json.dumps({"id": req["id"], "ok": True, "result": result}) + "\n")
+        return len(data)
+
+    def flush(self) -> None:
+        pass
+
+    def poll(self) -> int | None:
+        return None if self._alive else 0
+
+    def kill(self) -> None:
+        if self._alive:
+            self._alive = False
+            self._q.put(None)
+
+    def wait(self, timeout: float | None = None) -> int:
+        return 0
+
+
+def _worker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, engine: _Engine, *, slot: str = "main") -> BridgeWorker:
+    eng = tmp_path / "eng"
+    (eng / "PoE1").mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(bc, "build_engine_command", lambda _root: (["fake"], {}))
+    monkeypatch.setattr(bc.subprocess, "Popen", engine.popen)
+    monkeypatch.setattr(bc, "validate_import_xml_guardrail", lambda _code: None)
+    monkeypatch.setattr(bc, "stage_tree_versions_hint", lambda _code, _dir: None)
+    monkeypatch.setattr(bc, "check_tree_version_mismatch", lambda *_a: None)
+    # Real RPC timeouts are 10-15 s; the fake engine hangs for good, so any short timeout shows the same path.
+    orig = BridgeWorker._raw_call_unlocked
+
+    def short(self: BridgeWorker, method: str, params: Any = None, timeout: float = 15.0, **kw: Any) -> Any:
+        return orig(self, method, params, timeout=min(timeout, 0.2), **kw)
+
+    monkeypatch.setattr(BridgeWorker, "_raw_call_unlocked", short)
+    return BridgeWorker(slot_name=slot, pob_dir=eng, runtime_dir=tmp_path / "rt")
+
+
+def _imports(engine: _Engine, code: str) -> int:
+    return sum(1 for _launch, m, c in engine.sent if m == "import_code" and c == code)
+
+
+def test_hanging_saved_build_boots_empty_without_nested_restarts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    engine = _Engine(lambda m, p: m == "import_code" and p.get("code") == "BADCODE")
+    w = _worker(tmp_path, monkeypatch, engine)
+    w.last_good_code = "BADCODE"
+
+    w.start()
+
+    # One launch for the hung restore, one clean relaunch; before the fix this nested until the cap.
+    assert engine.launches == 2
+    assert _imports(engine, "BADCODE") == 1
+    assert w.is_running
+    assert w.last_good_code is None
+    assert w.restore_failed is not None
+    aside = Path(w.restore_failed["codeFile"])
+    assert aside.read_text(encoding="utf-8") == "BADCODE"
+    assert engine.sent[-1][1] == "new_build"
+    w.stop()
+
+
+def test_bad_slot_file_is_skipped_on_the_next_boot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    engine = _Engine(lambda m, p: m == "import_code" and p.get("code") == "BADCODE")
+    w = _worker(tmp_path, monkeypatch, engine)
+    w.last_good_code = "BADCODE"
+    w.save_slot_state()
+    w.last_good_code = None
+    w.start()
+    assert w.restore_failed is not None
+    w.stop()
+
+    # A new daemon reads the same slot file: the code that hung is not tried again.
+    launches = engine.launches
+    w2 = BridgeWorker(slot_name="main", pob_dir=w.pob_root, runtime_dir=tmp_path / "rt")
+    w2.start()
+    assert engine.launches == launches + 1
+    assert _imports(engine, "BADCODE") == 1
+    assert w2.last_good_code is None
+    assert w2.restore_failed is not None and w2.restore_failed.get("skipped") is True
+    w2.stop()
+
+
+def test_rpc_timeout_recovers_once_and_restores_the_last_good_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    engine = _Engine(lambda m, _p: m == "get_calcs")
+    w = _worker(tmp_path, monkeypatch, engine, slot="test")
+    w.start(restore_code="GOODCODE")
+    gen = w.generation
+
+    with pytest.raises(BridgeTimeoutError):
+        w.call("get_calcs", {})
+
+    assert w.generation == gen + 1
+    assert engine.launches == 2
+    assert _imports(engine, "GOODCODE") == 2  # the first boot and the one restart
+    assert w.last_good_code == "GOODCODE"
+    w.stop()
+
+
+def test_timed_out_import_restores_the_previous_build_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    engine = _Engine(lambda m, p: m == "import_code" and p.get("code") == "NEWCODE")
+    w = _worker(tmp_path, monkeypatch, engine, slot="test")
+    w.start(restore_code="GOODCODE")
+    engine.sent.clear()
+
+    with pytest.raises(BridgeError):
+        w.call("import_code", {"code": "NEWCODE", "mode": "replace"})
+
+    # The restart already re-imported GOODCODE; the import heal must not run a second time.
+    assert _imports(engine, "GOODCODE") == 1
+    assert engine.launches == 2
+    assert w.last_good_code == "GOODCODE"
+    w.stop()
+
+
+def test_recovery_gives_up_after_bounded_tries(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    engine = _Engine(lambda m, _p: m == "get_calcs")
+    w = _worker(tmp_path, monkeypatch, engine, slot="test")
+    w.start(restore_code="")
+    engine.hang = lambda m, _p: m in ("get_calcs", "version")
+
+    with pytest.raises(BridgeTimeoutError):
+        w.call("get_calcs", {})
+
+    assert engine.launches == 1 + bc._RECOVERY_TRIES
+    assert not w.is_running
+    w.stop()
+
+
+def test_generation_counts_every_launch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    engine = _Engine(lambda _m, _p: False)
+    w = _worker(tmp_path, monkeypatch, engine, slot="test")
+    assert w.generation == 0
+    w.start(restore_code="")
+    assert w.generation == 1
+    w.stop()
+    w.start(restore_code="")
+    assert w.generation == 2
+    w.stop()

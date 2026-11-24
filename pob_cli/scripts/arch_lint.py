@@ -24,6 +24,7 @@ LAYER_MAP: dict[str, int] = {
     "updater": 1,
     "bridge_protocol": 1,
     "bridge_client": 1,
+    "bridge_boot": 1,
     "importers": 1,
     "profile_import": 1,
     "game_data": 1,
