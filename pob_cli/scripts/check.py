@@ -209,6 +209,12 @@ def run_self_test(pob_cli_root: Path) -> int:
                 '\n\ndef _selftest_blocked_rpc(worker: object) -> None:\n'
                 '    worker.call("save_build_as", {})  # type: ignore[attr-defined]\n',
             ),
+            (
+                "spec-sync",
+                "spec-sync (lazy subcommand without a module)",
+                pkg / "cli.py",
+                '\n_LAZY_SUBCOMMANDS = {"selftest": (".cli_selftest_missing", "cmd_selftest", "Missing.")}\n',
+            ),
         ]
 
         check_script = staged / "scripts" / "check.py"

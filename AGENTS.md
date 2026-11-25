@@ -11,7 +11,7 @@ pob4agents is a command-line tool, run as `pob`, that lets AI agents inspect, te
 ```bash
 uv sync --project pob_cli --extra dev                 # dev env in pob_cli/.venv, locked to CI's versions; run the rest inside it
 python pob_cli/scripts/check.py --fast                # ruff + architecture lint, under 3 s
-python pob_cli/scripts/check.py --self-test           # proves the budget, layer and blocked-RPC rules still fire
+python pob_cli/scripts/check.py --self-test           # proves every lint rule still fires
 python pob_cli/scripts/check.py                       # full gate: fast gate + pytest with a pass/skip ratchet (see Tests)
 POB_OFFLINE=1 python -m pytest pob_cli/tests -q       # what PR CI runs: no engine, no network
 pob bootstrap                                         # managed engine in .runtime/engine, for real-engine tests
