@@ -602,7 +602,10 @@ def test_timeless_worker_recalculates_once_per_seed_and_reloads_periodically(mon
 
         def call_batch(self, calls: list[tuple[str, dict[str, Any] | None]], timeout: float = 60.0) -> list[dict[str, Any]]:
             batches.append(list(calls))
-            return [{"stats": {"CombinedDPS": 5000.0}} if m == "get_stats" else {"ok": True} for m, _p in calls]
+            # `add_item` answers with the new item's id, as the bridge does: the id is what a
+            # per-seed delete would need, so a reply without one could not catch its return.
+            answers = {"get_stats": {"stats": {"CombinedDPS": 5000.0}}, "add_item": {"item": {"id": len(batches)}}}
+            return [answers.get(m, {"ok": True}) for m, _p in calls]
 
         def stop(self) -> None:
             pass
