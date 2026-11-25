@@ -12,7 +12,7 @@ from ..snapshot import _call_batch, _finite_float
 from .dewater import dewater_build_in_place
 from .summary import _active_item_lines
 
-_TATTOO_LABEL_TOKENS = ("tattoo", "纹身", "紋身")
+_TATTOO_LABEL_TOKENS = ("tattoo", "文身", "纹身", "紋身")  # zh-CN writes 文身, zh-TW 紋身
 
 
 def _is_tattoo_label(label: str) -> bool:
@@ -187,9 +187,9 @@ def infer_auto_keep_and_flask_notes(
         _finite_float(st.get("IgniteChance")),
         _finite_float(st.get("EnemyIgniteChance")),
     )
-    has_shaper_of_flames = any(
-        any(t in nm for t in ("shaper of flames", "烈焰塑界者", "火焰塑形者")) for nm in node_names
-    )
+    # Every node and item carries its English name, so that is what these checks read. A Chinese
+    # fragment is kept only where it is the real zh-CN or zh-TW name and matches nothing else.
+    has_shaper_of_flames = any("shaper of flames" in nm for nm in node_names)
     if has_shaper_of_flames or "hits always ignite" in mods_low or "always ignite" in mods_low:
         auto_keep["conditionenemyignited"] = "Build has guaranteed Ignite (Shaper of Flames / always Ignite)"
     elif ig_chance >= 100.0:
@@ -201,17 +201,14 @@ def infer_auto_keep_and_flask_notes(
     )
     has_ramako = (61355 in node_ids) or any(
         not _is_tattoo_label(nm)
-        and any(
-            t in nm
-            for t in ("ramako, sun's light", "ramako, suns light", "烈阳之光", "烈陽之光", "太阳之光", "太陽之光")
-        )
+        and any(t in nm for t in ("ramako, sun's light", "ramako, suns light", "烈陽之光", "太阳之光"))
         for nm in node_names
     )
     has_tukohama = any(
         not _is_tattoo_label(nm) and any(t in nm for t in ("tukohama", "图克哈玛", "圖克哈瑪"))
         for nm in node_names
     )
-    has_natures_patience = any(any(t in nm for t in ("nature's patience", "自然耐心")) for nm in node_names)
+    has_natures_patience = any("nature's patience" in nm for nm in node_names)
     if has_cws and has_ramako:
         auto_keep["conditionstationary"] = "CwS/Ramako stationary build"
     elif has_cws:
@@ -223,18 +220,18 @@ def infer_auto_keep_and_flask_notes(
     elif has_natures_patience:
         auto_keep["conditionstationary"] = "Nature's Patience stationary keystone"
 
+    # Bloodnotch is "血痕" in zh-CN, which also opens the base Sanguine Raiment ("血痕之衣").
     has_hittank = has_cws or any(
-        t in item_blob for t in ("bloodnotch", "缺血症", "血痕", "valyrium", "女武神", "战日", "戰日", "immutable force")
+        t in item_blob for t in ("bloodnotch", "缺血症", "valyrium", "女武神", "戰日", "immutable force")
     )
-    has_ralakesh = any(t in item_blob for t in ("ralakesh's impatience", "拉拉克什的焦躁"))
-    has_farrul = "farrul's fur" in item_blob or "法瑞尔的兽甲" in item_blob
-    is_replica_farrul = "replica farrul's fur" in item_blob or "仿品法瑞尔" in item_blob
-    has_conviction = any(any(t in nm for t in ("conviction of power", "信念之力")) for nm in node_names)
-    # English names only for these two: every node carries one, and their Chinese names are shared
-    # with other passives (zh-CN names both Inexorable and Juggernaut's Unstoppable "势不可挡", and
-    # "不屈" opens Unbending, Indomitable Resolve and two more).
+    has_ralakesh = "ralakesh's impatience" in item_blob
+    has_farrul = "farrul's fur" in item_blob
+    is_replica_farrul = "replica farrul's fur" in item_blob
+    has_conviction = any("conviction of power" in nm for nm in node_names)
+    # Chinese names are shared here: zh-CN calls both Inexorable and Juggernaut's Unstoppable
+    # "势不可挡", and "不屈" opens Unbending, Indomitable Resolve and two more.
     has_inexorable = any("inexorable" in nm for nm in node_names)
-    has_enduring_comp = any(any(t in nm for t in ("enduring composure", "坚忍冷静")) for nm in node_names)
+    has_enduring_comp = any("enduring composure" in nm for nm in node_names)
     has_unflinching = any("unflinching" in nm for nm in node_names)
 
     if _min_charges_fill_max(st, "Endurance"):

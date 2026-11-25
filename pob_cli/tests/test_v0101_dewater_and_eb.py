@@ -238,7 +238,7 @@ def test_tattoo_excluded_from_ramako_auto_keep() -> None:
         {"ascendancyNodes": [{"id": 61355, "name": "Some Custom Label"}]},
         {"ascendancyNodes": [{"name": "Ramako, Sun's Light"}]},
         {"ascendancyNodes": [{"nameZh": "雷默科，太阳之光"}]},
-        {"ascendancyNodes": [{"nameZh": "烈阳之光"}]},
+        {"ascendancyNodes": [{"nameZh": "烈陽之光．雷默科"}]},
     ):
         ak_real, _ = infer_auto_keep_and_flask_notes(
             stats={},
