@@ -45,16 +45,26 @@ _BOOL_CANON_KEYS: frozenset[str] = frozenset(
 LIVE_SOURCE_RELOAD_AFTER_SEC = 120.0
 
 
+def _is_address(src: str, params: dict[str, Any]) -> bool:
+    """True when `src` says where a build lives: a URL, or an account the importer reads a character from."""
+    realm = str(params.get("realm") or "").strip()
+    if realm or src.startswith(("http://", "https://")):
+        return True
+    from ..profile_import import should_route_official_profile
+
+    # `Name#1234 --char X` has no URL and no realm, and is still an account, not a build code.
+    return should_route_official_profile(src, char_name=str(params.get("char_name") or "").strip() or None)
+
+
 def is_live_source(params: dict[str, Any]) -> bool:
     """True when a load request names where the build lives (URL, account profile), not its content."""
     xml_code = params.get("xml_code")
     if isinstance(xml_code, str) and xml_code.strip():
         return False
-    realm = str(params.get("realm") or "").strip()
     src = params.get("source")
     if isinstance(src, str) and src.strip():
-        return bool(realm) or src.strip().startswith(("http://", "https://"))
-    return bool(realm)
+        return _is_address(src.strip(), params)
+    return bool(str(params.get("realm") or "").strip())
 
 
 def compute_source_hash(params: dict[str, Any]) -> str | None:
@@ -72,7 +82,7 @@ def compute_source_hash(params: dict[str, Any]) -> str | None:
         canonical = "code:" + xml_code.strip()
     elif isinstance(src, str) and src.strip():
         s = src.strip()
-        if s.startswith(("http://", "https://")) or realm:
+        if _is_address(s, params):
             char_nm = str(params.get("char_name") or "").strip()
             lg = str(params.get("league") or "").strip()
             canonical = f"src:{s}|char={char_nm}|league={lg}|realm={realm}"

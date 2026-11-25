@@ -64,6 +64,9 @@ class _StubWorker:
         ({"source": "https://pobb.in/abc123"}, True),
         ({"source": "SomeAccount", "realm": "pc", "char_name": "Zed"}, True),
         ({"realm": "cn", "char_name": "Zed"}, True),
+        # The account form of `pob profile`: no URL, no realm, still an address.
+        ({"source": "Someone#1234", "char_name": "Zed"}, True),
+        ({"source": "Someone#1234"}, False),
         ({"source": "eNrtVVtv2jAU"}, False),
         ({"source": "<PathOfBuilding></PathOfBuilding>"}, False),
         ({"xml_code": "eNrtVVtv2jAU"}, False),
@@ -74,6 +77,13 @@ class _StubWorker:
 )
 def test_only_addresses_count_as_live_sources(params: dict[str, Any], live: bool) -> None:
     assert is_live_source(params) is live
+
+
+def test_an_account_is_hashed_with_the_character_it_names() -> None:
+    zed = compute_source_hash({"source": "Someone#1234", "char_name": "Zed"})
+    amy = compute_source_hash({"source": "Someone#1234", "char_name": "Amy"})
+    assert zed != amy
+    assert zed == compute_source_hash({"source": " Someone#1234 ", "char_name": "Zed"})
 
 
 def test_a_live_source_stops_matching_after_the_reload_window() -> None:
