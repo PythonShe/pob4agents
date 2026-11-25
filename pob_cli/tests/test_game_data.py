@@ -308,6 +308,13 @@ def test_pob_root_without_game_data_gives_way_and_a_poe2_root_is_refused(
     assert resolve_pob_dir(None, rt) == engine_dir
     assert resolve_pob_dir(None, tmp_path / "empty_rt") == tmp_path / "othre"
 
+    # A data pack the daemon cannot run loses to a managed engine it can, and wins when there is none.
+    monkeypatch.setenv("POB_ROOT", str(other))
+    monkeypatch.setattr("pob_cli.updater.is_valid_engine_dir", lambda p: Path(p) == engine_dir)
+    assert resolve_pob_dir(None, rt) == engine_dir
+    monkeypatch.setattr("pob_cli.updater.is_valid_engine_dir", lambda p: False)
+    assert resolve_pob_dir(None, rt) == other
+
     poe2_only = tmp_path / "poe2"
     (poe2_only / "PoE2" / "Data").mkdir(parents=True)
     (poe2_only / "Data").mkdir()
