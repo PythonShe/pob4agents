@@ -106,7 +106,11 @@ def _slice_diagnose_compare_markdown(res: dict[str, Any], section: str) -> str:
     from .formatters import format_diagnose_markdown
 
     head = format_diagnose_markdown(res).split("\n## Build A Diagnosis", 1)[0].rstrip()
-    parts = [head if section == "summary" else head.split("\n", 1)[0]]
+    if section != "summary":
+        # The comparison block goes; the env line and the update warning under it stay.
+        kept = [ln for ln in head.split("\n## ", 1)[0].splitlines() if ln.startswith(("[Env:", "> "))]
+        head = "\n".join(kept) if kept else head.split("\n", 1)[0]
+    parts = [head]
     for label, key, slot in (
         ("A", "buildA", res.get("target") or "main"),
         ("B", "buildB", res.get("refTarget") or "ref"),

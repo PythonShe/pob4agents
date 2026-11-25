@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..game_data.mod_guidance import DROP_ONLY_SOURCES
 from .primitives import _parse_numeric_or_none, render_table
 
 
@@ -159,7 +160,7 @@ def _fmt_game_data_mod(results: list[dict[str, Any]]) -> list[str]:
                 w_disp = f"{origin or 'Drop'}[{types_s}] (drop-only)"
             elif origin:
                 w_disp = f"{origin} (drop-only; no roll weight)"
-            elif str(r.get("source") or "Explicit") in ("Explicit", "Delve", "Veiled"):
+            elif str(r.get("source") or "Explicit") in DROP_ONLY_SOURCES:
                 w_disp = "drop-only (no roll weight)"
             else:  # a legacy corrupted, Eldritch, Foulborn or jewel implicit: not a dropped explicit
                 w_disp = f"{r.get('source')} (no roll weight)"

@@ -62,13 +62,20 @@ def _wiki_page(sections: int, body_chars: int) -> str:
 def test_wiki_mechanics_sections_stay_within_max_chars() -> None:
     page = _wiki_page(sections=8, body_chars=5000)
 
+    lead = len("Lead paragraph.")
     summary, sections = _extract_wiki_sections_and_summary(page, max_len=2000)
     assert len(summary) <= 2000
-    assert sum(len(s["text"]) for s in sections) == 2000
+    # `pob wiki` prints the lead paragraph and then every section in full.
+    assert lead + sum(len(s["text"]) for s in sections) == 2000
     assert sections[0]["heading"] == "Mechanics part 0"
 
     _, default_sections = _extract_wiki_sections_and_summary(page)
-    assert sum(len(s["text"]) for s in default_sections) == 12000
+    assert lead + sum(len(s["text"]) for s in default_sections) == 12000
+
+    long_lead = "<p>" + "y" * 3000 + "</p>" + page
+    lead_summary, lead_sections = _extract_wiki_sections_and_summary(long_lead, max_len=1000)
+    assert len(lead_summary) <= 1000
+    assert len(lead_summary.split("\n\n## ", 1)[0]) + sum(len(s["text"]) for s in lead_sections) <= 1000
 
     _, unlimited = _extract_wiki_sections_and_summary(page, max_len=0)
     assert [len(s["text"]) for s in unlimited] == [5000] * 8
@@ -98,8 +105,10 @@ def test_compare_section_keeps_each_build_under_its_own_heading(section: str) ->
         "comparison": {},
         "buildA": _diagnosis("Righteous Fire", 1_111_111),
         "buildB": _diagnosis("Cyclone", 7_777_777),
+        "updateWarning": "Engine update failed; using the previous engine.",
     }
     md = cli_inspect._slice_diagnose_compare_markdown(res, section)
+    assert md.startswith("[Env:") and "> [WARN] Engine update failed" in md.split("## Build A Diagnosis")[0]
 
     head_a, head_b = md.index("## Build A Diagnosis (`main`)"), md.index("## Build B Diagnosis (`ref`)")
     assert head_a < head_b
