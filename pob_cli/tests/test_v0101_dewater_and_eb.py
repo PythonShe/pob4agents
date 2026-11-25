@@ -323,7 +323,7 @@ def test_compare_matrix_and_diagnose_compare_smart_dewater_and_no_auto_keep() ->
     rw = _SmartDewaterWorker(
         slot_name="ref",
         config={"useFrenzyCharges": True, "conditionBeenHitRecently": True},
-        base_stats={"MinimumFrenzyCharges": 1.0},
+        base_stats={"FrenzyChargesMin": 3.0, "FrenzyChargesMax": 3.0},
     )
 
     # Default smart auto-keep in compare_builds
@@ -603,7 +603,7 @@ def test_five_command_smart_dewater_parity() -> None:
         ],
         allocated_nodes=[61355],
         nodes_db={"61355": {"name": "Ramako, Sun's Light", "asc": "Chieftain", "type": "Notable"}},
-        base_stats={"MinimumFrenzyCharges": 1.0, "IgniteChance": 62.0},
+        base_stats={"FrenzyChargesMin": 3.0, "FrenzyChargesMax": 3.0, "IgniteChance": 62.0},
         flask_ignite_bonus=38.0,  # pre-dewater 100%, post-dewater 62% -> revoked across all 5 commands!
     )
     w_ref = _SmartDewaterWorker(slot_name="ref")
