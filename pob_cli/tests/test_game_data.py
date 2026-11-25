@@ -85,10 +85,12 @@ def test_mod_bilingual_foulborn_bench_and_filters(tmp_path: Path) -> None:
 
     # Slot + ilvl filter: Prime (ilvl 86) excluded at ilvl=81, Rapturous (ilvl 81) included
     res_body = query_local_data(
-        "mod", "to maximum Life", pob_dir=REAL_POB_DIR, runtime_dir=tmp_path, slot="Body Armour", ilvl=81, limit=50
+        "mod", "to maximum Life", pob_dir=REAL_POB_DIR, runtime_dir=tmp_path, slot="Body Armour", ilvl=81, limit=0
     )
     body_ids = {m["id"] for m in res_body["results"]}
     assert "IncreasedLife11" in body_ids
+    # Keyed by the base's defence tag (`str_armour`), not by `body_armour`.
+    assert "LocalBaseArmourAndLife4" in body_ids
     assert "IncreasedLifeEnhancedBodyMod___" in body_ids
     assert "IncreasedLife12" not in body_ids
     for m in res_body["results"]:
@@ -97,7 +99,8 @@ def test_mod_bilingual_foulborn_bench_and_filters(tmp_path: Path) -> None:
             assert "Body Armour" in m["applicable_types"]
         else:
             assert any(
-                (k in ("body_armour", "armour", "default") or k.startswith("body_armour_")) and v > 0
+                (k in ("body_armour", "armour", "default") or k.startswith("body_armour_") or k.endswith("_armour"))
+                and v > 0
                 for k, v in m["weights"].items()
             )
 
