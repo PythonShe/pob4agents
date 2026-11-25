@@ -66,7 +66,7 @@ Resolves English or Chinese modifier text to an official PoE1 trade stat ID with
 | `--bench-hint/--no-bench-hint` | on | Include matching crafting-bench options for the slot in the report. |
 | `--pob auto\|on\|off` | `auto` | Batch-verify top `--pob-limit` candidates via daemon `trade_eval_items` (`on` exits `6` on failure; `auto` degrades to mod deltas). |
 | `--pob-limit` | `5` | Number of top candidates evaluated in PoB. |
-| `--surrogate-k` | off | Surrogate-prefilter fetched candidate pool to top `K` (`K >= 50` floor; `0` disables) via `compute_grad_build` before exact PoB evaluation. |
+| `--surrogate-k` | off | Rank the fetched listings with a linear surrogate (`compute_grad_build`; `0` disables) and send only the best `--pob-limit` to exact PoB evaluation. Unless `--fetch-limit` is given, fetches `max(50, K)` listings, at most `100`. |
 | `--fetch-limit` / `--max-results` | `10` / `8` | Listings fetched (max `100`, chunked in 10-ID GGG requests) / rows displayed. |
 | `--sort score\|price\|pob` | `score` | Report ranking order (`pob` ranks by finite DPS + 0.25*EHP, `inf`/`NaN`-safe). `price` compares chaos values using poe.ninja currency rates, so `1 divine` sorts after `50 chaos`. |
 | `--dump-query` | off | Print trade query JSON and exit without calling `/api/trade/search`. |
