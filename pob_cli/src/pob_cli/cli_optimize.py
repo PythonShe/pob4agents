@@ -215,6 +215,12 @@ def cmd_sweep(
     multiple=True,
     help="Keep build-guaranteed items in Pinnacle/Uber scenarios (repeatable or comma-separated).",
 )
+@click.option(
+    "--no-auto-keep",
+    "no_auto_keep",
+    is_flag=True,
+    help="Disable automatic mechanism-based config retention in Pinnacle/Uber scenarios.",
+)
 @click.option("--full", "full_payload", is_flag=True, help="Include full raw 200-key stats & headers per scenario (default is compact).")
 @_target_option(allow_slot_alias=True)
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON.")
@@ -223,6 +229,7 @@ def cmd_matrix(
     scenarios: tuple[str, ...],
     opt_scenarios: tuple[str, ...],
     keep: tuple[str, ...],
+    no_auto_keep: bool,
     full_payload: bool,
     target: str,
     as_json: bool,
@@ -236,6 +243,8 @@ def cmd_matrix(
     params: dict[str, Any] = {"target": target, "scenarios": all_specs, "full": full_payload}
     if keep:
         params["keep"] = list(keep)
+    if no_auto_keep:
+        params["no_auto_keep"] = True
     res = invoke_daemon("matrix", params)
     if as_json:
         _emit_json(res, compact=compact, out_path=out_path)

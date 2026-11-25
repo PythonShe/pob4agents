@@ -52,7 +52,7 @@ pob config set [<var>=<val|reset> ...] [--custom-mods "<text|clear>"] [--append-
 pob batch (--file <ops.json|-> | --json-ops '[...]') [--apply] [--no-undo] [--keep <spec>]... [--return summary,audit,audit:full,matrix,calc:DPS;Mana,export] [--compact] [--out f]
 # Batch ops: config, flask, item, item_db, item_edit, unequip, anoint, tree, tree_reset, import_tree_url, skill, add_group, delete_group, set_group, replace_group, new_build, set_level, set_class, switch_main
 pob sweep (--file <vars.json|-> | --json-variants '[...]') [--base-ops '[...]'] [--calc K]... [--scenario Pinnacle] [--keep <spec>]... [--compact] [--out f] [--json]
-pob matrix [Original Pinnacle Uber FlasksOff "Label:Pinnacle,k=v"] [-s <spec>]... [--keep <spec>]... [--full] [--json]  # Compact default; --full for raw 200-key stats
+pob matrix [Original Pinnacle Uber FlasksOff "Label:Pinnacle,k=v"] [-s <spec>]... [--keep <spec>]... [--no-auto-keep] [--full] [--json]  # Compact default; --full for raw 200-key stats
 
 # ROI Ranking, 3-Baseline A/B Comparison & Transplant
 pob rank-nodes [--stat CombinedDPS|TotalEHP|Life] [--max-dist 5] [--top 15] [--json]
