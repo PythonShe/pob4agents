@@ -6,6 +6,7 @@ import copy
 import hashlib
 import json
 import threading
+import time
 from collections import OrderedDict
 from collections.abc import Callable
 from typing import Any
@@ -37,6 +38,23 @@ _PARAM_KEY_ALIASES: dict[str, str] = {
 _BOOL_CANON_KEYS: frozenset[str] = frozenset(
     {"raw", "allRaw", "no_rank", "no_breakdown", "attribution", "no_auto_keep"}
 )
+
+# A URL or profile source is hashed by its address, not by the build behind it, and that build can
+# change (a character swaps gear, a paste is edited). A repeat within this window is taken for an
+# agent loop and skips the reload; after it the source is fetched again.
+LIVE_SOURCE_RELOAD_AFTER_SEC = 120.0
+
+
+def is_live_source(params: dict[str, Any]) -> bool:
+    """True when a load request names where the build lives (URL, account profile), not its content."""
+    xml_code = params.get("xml_code")
+    if isinstance(xml_code, str) and xml_code.strip():
+        return False
+    realm = str(params.get("realm") or "").strip()
+    src = params.get("source")
+    if isinstance(src, str) and src.strip():
+        return bool(realm) or src.strip().startswith(("http://", "https://"))
+    return bool(realm)
 
 
 def compute_source_hash(params: dict[str, Any]) -> str | None:
@@ -148,8 +166,9 @@ def _key_mentions_slot(key: tuple[Any, ...], slot: str, stale_rev: int | None = 
 class SlotReadCache:
     """Thread-safe bounded LRU per-(slot, rev) read cache with `compare` support & `sourceHash` tracking."""
 
-    def __init__(self, max_entries: int = 256) -> None:
+    def __init__(self, max_entries: int = 256, *, clock: Callable[[], float] = time.monotonic) -> None:
         self.max_entries = max(1, int(max_entries))
+        self._clock = clock
         self._max_hits = max(64, self.max_entries * 4)
         self._lock = threading.RLock()
         self._entries: OrderedDict[tuple[Any, ...], dict[str, Any]] = OrderedDict()
@@ -233,7 +252,11 @@ class SlotReadCache:
         rev: int,
         source_hash: str | None,
         load_meta: dict[str, Any] | None = None,
+        *,
+        live: bool = False,
     ) -> None:
+        """Remember what `slot` was loaded from. `live` marks a source whose build can change behind
+        the same hash (`is_live_source`), which `matching_slot_load` stops trusting after a while."""
         with self._lock:
             self._sync_slot_rev_unlocked(slot, rev)
             if not source_hash:
@@ -248,6 +271,7 @@ class SlotReadCache:
                 "sourceHash": source_hash,
                 "rev": rev,
                 "loadMeta": kept_meta,
+                "liveSince": self._clock() if live else None,
             }
 
     def matching_slot_load(
@@ -262,6 +286,9 @@ class SlotReadCache:
         with self._lock:
             rec = self._slot_sources.get(slot)
             if rec is None or rec.get("sourceHash") != source_hash or rec.get("rev") != rev:
+                return None
+            live_since = rec.get("liveSince")
+            if live_since is not None and self._clock() - live_since > LIVE_SOURCE_RELOAD_AFTER_SEC:
                 return None
             return copy.deepcopy(rec.get("loadMeta") or {})
 
