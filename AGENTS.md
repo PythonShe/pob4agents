@@ -11,7 +11,7 @@ pob4agents is a command-line tool, run as `pob`, that lets AI agents inspect, te
 ```bash
 uv sync --project pob_cli --extra dev                 # dev env in pob_cli/.venv, locked to CI's versions; run the rest inside it
 python pob_cli/scripts/check.py --fast                # ruff + architecture lint, under 3 s
-python pob_cli/scripts/check.py --self-test           # proves every lint rule still fires
+python pob_cli/scripts/check.py --self-test           # proves the budget, layer and blocked-RPC rules still fire
 python pob_cli/scripts/check.py                       # full gate: fast gate + pytest with a pass/skip ratchet (see Tests)
 POB_OFFLINE=1 python -m pytest pob_cli/tests -q       # what PR CI runs: no engine, no network
 pob bootstrap                                         # managed engine in .runtime/engine, for real-engine tests
@@ -26,7 +26,7 @@ Releases are cut by bumping `__version__` in `pob_cli/src/pob_cli/__init__.py` a
 
 ## Layout
 
-- `pob_cli/src/pob_cli/`: the package, five layers that import only downward. L0 foundation (`errors`, `ticks`, `os_util`, `compat`, `json_io`, `guardrails/`); L1 engine and data sources (`updater/`, `bridge_client`, `importers`, `profile_import/`, `game_data/`, `external_data/`, `poedb_client/`); L2 domain (`analyzer/`, `mutators/`, `snapshot`, `comparator/`, `formatters/`, `bench/`, `trade_*`, `timeless/`); L3 `daemon/`; L4 the `cli*` entry points. The full table is in the architecture guide.
+- `pob_cli/src/pob_cli/`: the package, five layers that import only downward. L0 foundation (`errors`, `ticks`, `os_util`, `compat`, `json_io`, `locale_cfg`, `guardrails/`); L1 engine and data sources (`updater/`, `bridge_client`, `importers`, `profile_import/`, `game_data/`, `external_data/`, `poedb_client/`); L2 domain (`analyzer/`, `mutators/`, `snapshot`, `comparator/`, `formatters/`, `bench/`, `trade_*`, `timeless/`); L3 `daemon/`; L4 the `cli*` entry points. The full table is in the architecture guide.
 - `pob_cli/src/pob_cli/data/`, `lua/`: bundled `bench_costs.json` and `headless_runner.lua` (the macOS/Linux engine host).
 - `pob_cli/tests/`: pytest. `engine_paths.py` finds a real engine; `support.py` holds helpers for timing and network-failure tests.
 - `pob_cli/scripts/`: `check.py` and `arch_lint.py` (the gate) and the generators.
