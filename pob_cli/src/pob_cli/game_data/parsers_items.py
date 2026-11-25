@@ -20,7 +20,17 @@ from .lua_parser import (
     _parse_lua_return,
 )
 from .parsers_special import _extract_special_lua_blocks
+from .parsers_vestigial import (
+    VESTIGIAL_ITEM_TYPES,
+    _load_vestigial_mods,
+    _pob_title_key,
+    _vestigial_donor_map_from_mods,
+)
 from .zh_dict import _ZhDictionary
+
+# Lines PoB's unique data may put between the title and the base type.
+_UNIQUE_HEADER_BEFORE_BASE: tuple[str, ...] = ("Source:", "League:", "Variant:")
+_UNIQUE_INFLUENCE_LINES: frozenset[str] = frozenset({"Shaper Item", "Elder Item", "Fractured Item", "Synthesised Item"})
 
 
 def _parse_bases(poe1_dir: Path, zh: _ZhDictionary) -> list[dict[str, Any]]:
@@ -78,11 +88,15 @@ def _parse_uniques(
     bases_by_name: dict[str, dict[str, Any]],
     foulborn_mods_by_id: dict[str, dict[str, Any]],
     zh: _ZhDictionary,
+    *,
+    vestigial_by_donor: dict[str, list[str]] | None = None,
 ) -> list[dict[str, Any]]:
     data_dir = poe1_dir / "Data"
     uniques_dir = data_dir / "Uniques"
     if not uniques_dir.is_dir():
         return []
+    if vestigial_by_donor is None:
+        vestigial_by_donor = _vestigial_donor_map_from_mods(_load_vestigial_mods(data_dir, zh))
 
     foulborn_lua_map: dict[str, list[str]] = {}
     fb_lua_path = data_dir / "ModFoulbornMap.lua"
@@ -128,6 +142,14 @@ def _parse_uniques(
         if name in seen_names:
             continue
         seen_names.add(name)
+        # The base type is the first line after the title that is not a header (Gorgon's Gaze has
+        # its Source line there); the headers move behind it, where the loop below reads them.
+        head = 1
+        while head < len(lines) - 1 and (
+            lines[head].startswith(_UNIQUE_HEADER_BEFORE_BASE) or lines[head] in _UNIQUE_INFLUENCE_LINES
+        ):
+            head += 1
+        lines = [name, lines[head], *lines[1:head], *lines[head + 1 :]]
         base_type = MOD_TAG_PREFIX_RE.sub("", lines[1]).strip() or lines[1]
 
         variants: list[str] = []
@@ -170,7 +192,7 @@ def _parse_uniques(
             if ln.startswith("{variant:") and idx < 10 and MOD_TAG_PREFIX_RE.sub("", ln).strip() in bases_by_name:
                 idx += 1
                 continue
-            if ln in ("Shaper Item", "Elder Item", "Fractured Item", "Synthesised Item"):
+            if ln in _UNIQUE_INFLUENCE_LINES:
                 idx += 1
                 continue
             if ":" in ln and not ln.startswith("{") and ln.split(":", 1)[0].strip() in UNIQUE_META_KEYS:
@@ -217,6 +239,8 @@ def _parse_uniques(
         zh_name = zh.translate_unique(name)
         foulborn_en = f"Foulborn {name}"
         zh_foulborn = zh.translate_unique(foulborn_en)
+        donor_mods = list(vestigial_by_donor.get(_pob_title_key(name)) or ())
+        donor_mods_zh = [zh.translate_stat_line(ln) for ln in donor_mods] if (zh.available and donor_mods) else []
 
         records.append(
             {
@@ -237,6 +261,12 @@ def _parse_uniques(
                 "explicits": explicits,
                 "explicits_zh": explicits_zh,
                 "foulborn_mods": foulborn_mods,
+                "vestigial_donor_mods": donor_mods,
+                "vestigial_donor_mods_zh": donor_mods_zh,
+                # PoB offers the Vestigial source only to a core-pool unique (no `Source:` line) of
+                # these item types; Stasis Prison is its one named exception.
+                "takes_vestigial": str(item_class).lower() in VESTIGIAL_ITEM_TYPES
+                and (not source or name == "Stasis Prison"),
             }
         )
     return records
@@ -430,5 +460,10 @@ def _parse_mods(poe1_dir: Path, zh: _ZhDictionary) -> tuple[list[dict[str, Any]]
             records.append(rec)
             if source_name == "Foulborn":
                 foulborn_by_id[mod_id] = rec
+
+    for vrec in _load_vestigial_mods(data_dir, zh):
+        if vrec["id"] not in seen_ids:
+            seen_ids.add(vrec["id"])
+            records.append(vrec)
 
     return records, foulborn_by_id
