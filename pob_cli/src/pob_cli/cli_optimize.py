@@ -362,6 +362,12 @@ def cmd_rank_gems(
         f"### Candidate Gem Ranking — Group #{res.get('groupIndex')} `{strip_pob_escapes(res.get('groupLabel'))}` ({res.get('mode')}, Base `{res.get('dpsField')}`: `{fmt_num(res.get('baseDps'))}`)\n"
         + render_table(headers_g, rows)
     )
+    excluded = res.get("excludedSupports") or []
+    if excluded:
+        excl_str = "; ".join(
+            f"{strip_pob_escapes(str(ex.get('name') or '-'))} ({ex.get('reason') or 'conflict'})" for ex in excluded[:8]
+        )
+        body += f"\n_Excluded conflicting supports: {excl_str}_"
     skipped = res.get("filteredArchetypeSwaps") or []
     if skipped:
         body += f"\n_Filtered archetype-changing / invalid supports: {', '.join(skipped[:8])}_"
