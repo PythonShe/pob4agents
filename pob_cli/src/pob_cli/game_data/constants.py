@@ -255,7 +255,7 @@ SLOT_ALIASES: dict[str, tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]
     "ring_3": (("ring",), ("ring", "default"), ("Ring",)),
     "belt": (("belt",), ("belt", "default"), ("Belt",)),
     "flask": (("flask",), ("flask", "default"), ("Flask",)),
-    "tincture": (("tincture",), ("tincture", "default"), ()),
+    "tincture": (("tincture",), ("tincture", "default"), ("Tincture",)),
     "jewel": (("jewel", "abyss_jewel"), ("jewel", "default"), ()),
     "abyss_jewel": (("abyss_jewel",), ("abyss_jewel", "default"), ()),
     "cluster_jewel": (

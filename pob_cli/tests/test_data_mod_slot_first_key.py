@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 from engine_paths import find_engine_data
 
+from pob_cli import item_inspect
 from pob_cli.game_data import query_local_data
 from pob_cli.game_data.queries_core import (
     _mod_matches_slot,
@@ -136,7 +137,11 @@ def test_real_mods_follow_the_first_carried_key(runtime_dir: Path) -> None:
 
     assert "LocalIncreaseSocketedGemUnsetRing1" in _ids("Level of Socketed Gems", "ring", runtime_dir)
 
-    assert not any(i.startswith("IncreasedLife") for i in _ids("to maximum Life", "flask", runtime_dir))
+    # Flasks and tinctures roll from their own mod files, never from the gear file's `default`.
+    for own_file_slot in ("flask", "tincture"):
+        assert not any(i.startswith("IncreasedLife") for i in _ids("to maximum Life", own_file_slot, runtime_dir))
+    tincture = query_local_data("mod", "", pob_dir=REAL_POB_DIR, runtime_dir=runtime_dir, slot="tincture", limit=0)
+    assert tincture["count"] > 0 and {m["source"] for m in tincture["results"]} == {"Tincture"}
 
 
 @needs_engine_data
@@ -154,3 +159,30 @@ def test_real_elevated_mods_show_on_their_slot_only(runtime_dir: Path) -> None:
 def test_real_aliases_answer_as_their_slot(alias: str, canonical: str, runtime_dir: Path) -> None:
     for query in ("Resistance", "increased Attack Speed", "maximum Life"):
         assert _ids(query, alias, runtime_dir) == _ids(query, canonical, runtime_dir)
+
+
+def _inspect(item_class: str, base: str, lines: list[str], slot: str, runtime_dir: Path) -> dict[str, Any]:
+    raw = "\n".join([f"Item Class: {item_class}", "Rarity: RARE", "Doom Shell", base, "--------", "Item Level: 86", "--------", *lines])
+    return item_inspect.inspect_item(
+        raw, slot=slot, pob_dir=REAL_POB_DIR, runtime_dir=runtime_dir, include_suggestions=False
+    )
+
+
+@needs_engine_data
+def test_real_item_inspect_reads_influence_mods(runtime_dir: Path) -> None:
+    # Both suffixes are keyed by `body_armour_<influence>` alone, so a rule that only knows the base's own tags
+    # leaves them unmatched and cannot count the open affixes.
+    body = _inspect(
+        "Body Armours",
+        "Astral Plate",
+        ["+90 to maximum Life", "11% increased Life Recovery rate", "Recover 4% of Mana on Kill"],
+        "body_armour",
+        runtime_dir,
+    )
+    assert body["unmatched"] == [] and body["certain"] is True
+    assert body["counts"] == {"prefix": 1, "suffix": 2}
+    assert {a["group"] for a in body["affixes"]} == {"IncreasedLife", "LifeRecoveryRate", "MaximumManaOnKillPercent"}
+
+    # Without the influence suffix as a candidate, this line was read as a prefix of another item class.
+    gloves = _inspect("Gloves", "Titan Gauntlets", ["+15% to Cold Damage over Time Multiplier"], "gloves", runtime_dir)
+    assert gloves["counts"] == {"prefix": 0, "suffix": 1} and gloves["certain"] is True
