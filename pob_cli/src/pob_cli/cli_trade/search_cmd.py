@@ -152,13 +152,21 @@ def _try_auto_trade_query(
     rarity: str = "nonunique",
     allow_corrupted: bool = False,
     league: str | None = None,
+    problems: list[str] | None = None,
 ) -> dict[str, Any] | None:
-    """Invoke PoB's `trade_generate_query` kernel via daemon when `--auto-query` is requested."""
+    """Invoke PoB's `trade_generate_query` kernel via daemon when `--auto-query` is requested.
+
+    A reason goes into `problems` when no query comes back, so the search that runs without it says why.
+    """
     import pob_cli.cli_trade as _ct
+
+    def _no(reason: str) -> None:
+        if problems is not None:
+            problems.append(reason)
 
     slot_name = pob_slot or slot
     if not slot_name:
-        return None
+        return _no("it needs --slot")
     req_params: dict[str, Any] = {"target": target, "slotName": slot_name, "stat": stat}
     if rarity and rarity != "nonunique":
         req_params["rarity"] = rarity
@@ -168,10 +176,12 @@ def _try_auto_trade_query(
         req_params["league"] = league
     try:
         res = _ct._daemon_call_safe("trade_generate_query", req_params)
-    except Exception:
-        return None
-    if not isinstance(res, dict) or res.get("error"):
-        return None
+    except Exception as exc:
+        return _no(str(exc).strip() or type(exc).__name__)
+    if not isinstance(res, dict):
+        return _no("PoB returned no query")
+    if res.get("error"):
+        return _no(str(res.get("error")))
     q_json = res.get("queryJson")
     if isinstance(q_json, str) and q_json.strip():
         try:
@@ -179,8 +189,8 @@ def _try_auto_trade_query(
             if isinstance(parsed, dict):
                 return _enrich_auto_query_result(res, wrap_auto_query(parsed), slot_name=slot_name, rarity=rarity)
         except json.JSONDecodeError:
-            return None
-    return None
+            pass
+    return _no("PoB returned no query")
 
 
 def _resolve_current_and_category(
@@ -446,10 +456,14 @@ def cmd_trade_search(
     )
     auto_res: dict[str, Any] | None = None
     if auto_query:
+        auto_problems: list[str] = []
         auto_res = _try_auto_trade_query(
             pob_slot=pob_slot, slot=slot, target=target, rarity=rarity,
-            allow_corrupted=allow_corrupted, league=league,
+            allow_corrupted=allow_corrupted, league=league, problems=auto_problems,
         )
+        if auto_res is None:
+            # The search still runs on the filters given; saying nothing would pass it off as PoB's query.
+            _err_utf8(f"Warning: --auto-query gave no query ({'; '.join(auto_problems) or 'unknown reason'}); searching without it.")
         if auto_res is not None:
             apply_cli_filters_to_auto_query(
                 auto_res["query"], status=status, budget=budget, currency=currency,
