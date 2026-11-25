@@ -286,6 +286,33 @@ Implicits: 1
     return base_dir
 
 
+def test_pob_root_without_game_data_gives_way_and_a_poe2_root_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from pob_cli.errors import CrossGameHallucinationError
+
+    # A checkout may hold the legacy pack, which would answer before the last fallback below.
+    monkeypatch.setattr("pob_cli.game_data.paths.detect_source_checkout_root", lambda: None)
+    rt = tmp_path / "rt"
+    engine_dir = _create_synthetic_pob_dir(rt / "engine", pob_ver="2.99.0", extra_mod_level=10)
+    other = _create_synthetic_pob_dir(tmp_path / "other", pob_ver="2.98.0", extra_mod_level=10)
+
+    monkeypatch.setenv("POB_ROOT", str(other))
+    assert resolve_pob_dir(None, rt) == other
+
+    # A typo: the daemon falls back to the managed engine for builds, so data queries must too.
+    monkeypatch.setenv("POB_ROOT", str(tmp_path / "othre"))
+    assert resolve_pob_dir(None, rt) == engine_dir
+    assert resolve_pob_dir(None, tmp_path / "empty_rt") == tmp_path / "othre"
+
+    poe2_only = tmp_path / "poe2"
+    (poe2_only / "PoE2" / "Data").mkdir(parents=True)
+    (poe2_only / "Data").mkdir()
+    monkeypatch.setenv("POB_ROOT", str(poe2_only))
+    with pytest.raises(CrossGameHallucinationError):
+        resolve_pob_dir(None, rt)
+
+
 def test_no_zh_fallback_resolution_and_auto_rebuild(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Verify --no-zh mode, <runtime_dir>/engine resolution, auto rebuild on update, and invalid kind error."""
     monkeypatch.delenv("POB_ROOT", raising=False)
