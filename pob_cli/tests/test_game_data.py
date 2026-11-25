@@ -58,6 +58,9 @@ def test_cold_build_and_warm_query_benchmarks(tmp_path: Path, monkeypatch: pytes
         ("translate", "Dark Bargain", {}),
     ]
     for kind, query, kwargs in warm_cases:
+        # The first call of a kind loads per-process tables (the zh dictionaries take ~90 ms), so time
+        # a second one: otherwise the result depends on which tests ran earlier in the process.
+        query_local_data(kind, query, pob_dir=REAL_POB_DIR, runtime_dir=tmp_path, **kwargs)  # type: ignore[arg-type]
         tq = time.perf_counter()
         res = query_local_data(kind, query, pob_dir=REAL_POB_DIR, runtime_dir=tmp_path, **kwargs)  # type: ignore[arg-type]
         elapsed_ms = (time.perf_counter() - tq) * 1000.0
