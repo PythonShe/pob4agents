@@ -159,8 +159,10 @@ def _fmt_game_data_mod(results: list[dict[str, Any]]) -> list[str]:
                 w_disp = f"{origin or 'Drop'}[{types_s}] (drop-only)"
             elif origin:
                 w_disp = f"{origin} (drop-only; no roll weight)"
-            else:
+            elif str(r.get("source") or "Explicit") in ("Explicit", "Delve", "Veiled"):
                 w_disp = "drop-only (no roll weight)"
+            else:  # a legacy corrupted, Eldritch, Foulborn or jewel implicit: not a dropped explicit
+                w_disp = f"{r.get('source')} (no roll weight)"
         affix_grp = f"{r.get('affix') or '-'} ({r.get('group') or '-'})"
         rows.append(
             [
