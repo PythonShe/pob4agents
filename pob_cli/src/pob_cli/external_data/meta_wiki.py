@@ -354,10 +354,16 @@ def _extract_wiki_sections_and_summary(
     else:
         sec_cap = max(1800, (max_len * 1800) // 3500)
         max_secs = max(6, (max_len * 6) // 3500)
-        mechanics_sections = [
-            {"heading": heading, "text": body_text[:sec_cap]}
-            for _, _, heading, body_text in priority_entries[:max_secs]
-        ]
+        # The sections are printed in full next to the summary, so together they stay within
+        # `max_len` too: the per-section caps alone allow ten times that.
+        mechanics_sections = []
+        budget = max_len
+        for _, _, heading, body_text in priority_entries[:max_secs]:
+            if budget <= 0:
+                break
+            text = body_text[: min(sec_cap, budget)]
+            mechanics_sections.append({"heading": heading, "text": text})
+            budget -= len(text)
 
     eff_lead_cap = lead_cap if lead_cap is not None else (0 if unlimited else max(900, (max_len * 900) // 3500))
     blocks: list[str] = []
