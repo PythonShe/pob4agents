@@ -155,6 +155,32 @@ def _augment_click_usage_error(exc: click.UsageError, fallback_ctx: click.Contex
         exc.message = f"{msg}\nSuggested command: `{cmd_path} --help`"
 
 
+def _note_release(group: click.Group, ctx: click.Context) -> None:
+    """Pass on the guardrails' release note after a command; never fails it."""
+    try:
+        sub = ctx.invoked_subcommand or ""
+        if sub.startswith("_") or sub == "serve":
+            return
+        try:
+            kept = group.get_command(ctx, "self-update") is not None
+        except Exception:
+            kept = False
+        try:
+            from .updater import constants as _c
+
+            urls = (_c.POB_AGENT_RELEASES_LATEST_URL, _c.POB_AGENT_DOWNLOAD_BASE)
+            parts = [str(kept), "True", *urls]
+        except Exception:
+            parts = [str(kept), "False", "", ""]
+        from .guardrails import release_note
+
+        text = release_note(parts)
+        if text:
+            _echo_stderr_utf8(text)
+    except Exception:
+        pass
+
+
 class GuardrailGroup(LazyGroup):
     """LazyGroup catching CrossGameHallucinationError / LegacyPatchTrapError (-> exit 1) & enriching Click errors."""
 
@@ -190,6 +216,8 @@ class GuardrailGroup(LazyGroup):
         from .guardrails import reset_cli_warnings, warning_context
 
         reset_cli_warnings()
+        if ctx.parent is None and self.name == "main" and not ctx.resilient_parsing:
+            ctx.call_on_close(lambda: _note_release(self, ctx))
         with warning_context():
             try:
                 return super().invoke(ctx)

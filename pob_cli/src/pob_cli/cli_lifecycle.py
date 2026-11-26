@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import sys
 from typing import Any
 
@@ -25,6 +24,7 @@ from .cli_lang import (
 from .cli_lang import (
     cmd_lang as cmd_lang,
 )
+from .os_util import env_flag
 
 
 @click.command("_daemon", hidden=True)
@@ -224,7 +224,7 @@ def cmd_update(
     from .formatters import render_table
     from .updater import STATE_BOOTSTRAP_MISSING, check_and_apply_updates, get_update_warning
 
-    eff_offline = bool(offline or os.environ.get("POB_OFFLINE", "").strip().lower() in ("1", "true", "yes", "on"))
+    eff_offline = bool(offline or env_flag("POB_OFFLINE"))
     res: dict[str, Any] | None = None
     if read_daemon_state() is not None:
         try:

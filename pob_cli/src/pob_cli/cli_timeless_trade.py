@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -12,6 +11,7 @@ import click
 from .cli_common import _echo_stderr_utf8
 from .formatters.timeless_trade_md import format_timeless_trade_markdown
 from .locale_cfg import current_realm
+from .os_util import env_flag
 from .timeless.trade_live import (
     build_urls_only_trade_report,
     execute_timeless_trade_plan,
@@ -101,7 +101,7 @@ def run_timeless_trade_overlay(
 ) -> tuple[dict[str, Any], str, int, str | None]:
     """Shard PoB timeless results, run Early-Stop Trade lookups, and return `(trade_res, md, exit_code, err_msg)`."""
     eff_realm = current_realm(cli_realm=realm)
-    offline_env = os.environ.get("POB_OFFLINE", "").strip() == "1"
+    offline_env = env_flag("POB_OFFLINE")
     offline_fallback = offline_env and max_trade_batches > 0
     eff_batches = 0 if offline_fallback else max_trade_batches
     if offline_fallback:

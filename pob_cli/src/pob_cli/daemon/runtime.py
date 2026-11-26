@@ -16,6 +16,7 @@ from ..os_util import _CREATE_BREAKAWAY_FROM_JOB as _CREATE_BREAKAWAY_FROM_JOB
 from ..os_util import _ERROR_ACCESS_DENIED as _ERROR_ACCESS_DENIED
 from ..os_util import _get_kernel32 as _get_kernel32
 from ..os_util import _is_pid_alive as _is_pid_alive
+from ..os_util import env_flag
 from ..updater import format_stderr_update_alert, get_runtime_dir, load_update_state
 
 GAME_ID = "poe1"
@@ -85,8 +86,7 @@ def _daemon_boot_error_file(runtime_dir: Path | None = None) -> Path:
 
 
 def _is_offline_env() -> bool:
-    val = os.environ.get("POB_OFFLINE", "").strip().lower()
-    return val in ("1", "true", "yes", "on")
+    return env_flag("POB_OFFLINE")
 
 
 def reset_stderr_alert_flag() -> None:

@@ -8,7 +8,6 @@ The engine itself never fetches anything.
 
 from __future__ import annotations
 
-import os
 import re
 import time
 from pathlib import Path
@@ -16,6 +15,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from .bridge_protocol import BridgeError, _decode_share_code_xml, _extract_xml_tree_versions
+from .os_util import env_flag
 
 _FAILED_TREE_STAGE: dict[tuple[str, str], float] = {}
 _TREE_STAGE_RETRY_COOLDOWN_SEC = 60.0
@@ -66,7 +66,7 @@ def stage_tree_versions(versions: list[str], game_dir: Path) -> list[str]:
             continue
         if not missing:
             continue
-        if os.environ.get("POB_OFFLINE") == "1":
+        if env_flag("POB_OFFLINE"):
             raise _tree_stage_error(tv, missing, "POB_OFFLINE=1 is set")
         ckey = (gdir_key, tv)
         last_fail = _FAILED_TREE_STAGE.get(ckey)

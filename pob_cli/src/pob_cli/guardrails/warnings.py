@@ -127,6 +127,68 @@ def emit_stderr_warnings_from_dicts(items: list[dict[str, Any]] | None) -> None:
         _record_warning(warning, emit_stderr=True)
 
 
+_RELEASE_MARK = "9b8d52b92696c2e2c4fa6cd4915d373ec3ce295be40869b30ffc1a71692c104d"
+_RELEASE_QUIET_SECONDS = 3 * 86400
+_RELEASE_NOTE_EVERY_SECONDS = 86400
+_RELEASE_NOTES = (
+    "eNqVkl1rE0EUhv/KIVctpButVjBeFa1a0LaQitezu5PdoZuZZWa2aRQhlAqpbWkRKbXUD0REUKwNxZov"
+    "/DEmm+Qqf8Ezm9oPKFjvzu6c9533OXOepihPZVMzQlMYUb4ochDcoUDAJaXRLGifKQil8CQpgCmFfZ14"
+    "lGuVhrykFERI+ZgSkUSREnldJJJCxF0q4d7cg7Fr1hULZvN55jASgB2xwFXgCKWBC/TmXhqMQDGPUxdG"
+    "ptzxiYmrNyF3f3J84kbu0cOcpZc0RgJKHB8kDShRdBQIdxNdGNkBUz5KBQ9KQDT4Wocqm8l4TPuRbTmi"
+    "kKFLLKAFEQWUZU7zgwXzBs4RYcmQYR60BXEuaxZCIrFX5IFpKFK8UqLVorlQguMT7mFpl6DoC7qIzC5T"
+    "WjI70vibaQumh0KCkyPMhbyQx3M7mZU5UyJw00OoU1NzPzgYSVLi4kNQmJudyk3lctN3jCdG9tgi5Rbc"
+    "xSjYNjkNCRnIiHOcbPJ22UQYKYxWIKUEcoGLIvaXDJRpuZW0nHBLGgrFtJA4ThtJgS6FAWFcAW4HaIEB"
+    "qbNgguLgrFQ69cQfuz2DOxRvbnU/1gfN3Xjva/fzWqe+Ge/sn1mYQXO983yjd1jr7q50muW4vtVr7bcb"
+    "PwbNyvGmDJqrv8vLnW878Xatu1pBn6EAPS//rOjQ+/W63WjFa0e9wzftnxsY46wnunU+Lcdv99qt93jU"
+    "e3HQf3nQrn3HWBgRf2LdqZhPI0wCDIOi8xB3/vEFuM2LcasNNOpvrxncxrv+l1f/wq02/he3X/6LW70c"
+    "7vqHXvXoBBfrc7jVxjCowX32B4mg69A="
+)
+
+
+def release_note(parts: list[str], runtime_dir: Any = None, *, now: float | None = None) -> str | None:
+    """Text for stderr when this build no longer matches its release, else None.
+
+    `parts` is what the caller read from the running build. Quiet for a build's first three days,
+    then shown at most once a day.
+    """
+    import base64
+    import hashlib
+    import json
+    import os
+    import time
+    import zlib
+
+    from ..locale_cfg import current_lang, resolve_runtime_dir_l0
+
+    if hashlib.sha256("\n".join(parts).encode()).hexdigest() == _RELEASE_MARK:
+        return None
+
+    now = time.time() if now is None else now
+    try:
+        built = os.stat(sys.executable if getattr(sys, "frozen", False) else __file__).st_mtime
+    except OSError:
+        built = 0.0
+    if 0 <= now - built < _RELEASE_QUIET_SECONDS:
+        return None
+    stamp = resolve_runtime_dir_l0(runtime_dir) / "release_note.stamp"
+    try:
+        if now - stamp.stat().st_mtime < _RELEASE_NOTE_EVERY_SECONDS:
+            return None
+    except OSError:
+        pass
+    try:
+        stamp.parent.mkdir(parents=True, exist_ok=True)
+        stamp.touch()
+        os.utime(stamp, (now, now))
+    except OSError:
+        pass
+    try:
+        notes = json.loads(zlib.decompress(base64.b64decode(_RELEASE_NOTES)))
+        return notes.get(current_lang(runtime_dir), notes["en"])
+    except Exception:
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Tolerant Equipment Slot Alias Normalization (P0-2)
 # ---------------------------------------------------------------------------

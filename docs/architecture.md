@@ -58,8 +58,8 @@ Runtime state in `<POB_RUNTIME_DIR>/`: `config.json` (the language `pob lang` sa
 | `POB_SLOT` | Default build slot slug |
 | `POB_PROXY` / `HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY` | Proxy for every download and query |
 | `POB_GITHUB_MIRROR` | Mirror prefix for GitHub downloads in `bootstrap` / `update`. The routine check (latest tag, `manifest.xml` ETag) goes through the mirror. A manifest that names files to replace, with the hashes they are checked against, is taken from GitHub itself, and the mirror's copy only when GitHub does not answer (`updater/remote.py`, `_github_first`) |
-| `POB_OFFLINE=1` | Skip update checks (same as `pob --offline`) |
-| `POB_NO_UPDATE_NOTICE=1` | No "pob X is available" line on interactive terminals |
+| `POB_OFFLINE=1` | Skip update checks (same as `pob --offline`). On is `1`, `true`, `yes` or `on` in any case; anything else, `0` included, is off |
+| `POB_NO_UPDATE_NOTICE=1` | No "pob X is available" line on interactive terminals. Same on values as `POB_OFFLINE` |
 | `POB_LEGACY_DIR` | Read-only legacy PobTools seed |
 | `POB_LANG` | Display language `zh-CN` (default), `zh-TW` or `en`; overrides `config.json` for that process. An invalid value is ignored with one stderr warning and shows as `envIgnored` in `pob lang --json` |
 | `POESESSID` / `POE_COOKIE` | Trade (after 401/403) and private international official profiles; environment only, never printed or passed as args |

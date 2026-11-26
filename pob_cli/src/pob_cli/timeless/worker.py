@@ -15,6 +15,7 @@ from typing import Any
 from ..errors import CrossGameHallucinationError
 from ..game_data import fold_han
 from ..guardrails import GuardrailScope, check_input, check_poe2_timeless_jewel
+from ..os_util import env_flag
 from ..updater import (
     _download_pob_files_to_staging,
     fetch_pob_manifest_remote,
@@ -470,7 +471,7 @@ def ensure_lut_files(
     ):
         return cache_dir
 
-    if os.environ.get("POB_OFFLINE", "").strip() == "1":
+    if env_flag("POB_OFFLINE"):
         raise RuntimeError(f"{stem} is not installed and POB_OFFLINE=1 rules out fetching it")
 
     status, manifest, _etag = fetch_pob_manifest_remote(proxy=proxy, mirror=mirror)

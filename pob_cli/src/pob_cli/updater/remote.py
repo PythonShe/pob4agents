@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     import httpx
 
+from ..os_util import env_flag
 from .constants import (
     _ASSET_TIMEOUT_SPEC,
     _CHECK_TIMEOUT_SPEC,
@@ -486,7 +487,7 @@ def fetch_pob_manifest_subset(
     manifest, ready, to_fetch = _plan_manifest_subset(poe1, predicate, target_root)
     if manifest is None or not to_fetch:
         return ready
-    if os.environ.get("POB_OFFLINE") == "1":
+    if env_flag("POB_OFFLINE"):
         raise UpdateError("POB_OFFLINE=1: cannot fetch missing optional PoB assets on demand")
 
     pkg = _pkg()

@@ -230,6 +230,19 @@ def test_cli_notice_only_on_a_terminal(monkeypatch: pytest.MonkeyPatch, tmp_path
     assert shown == []
 
 
+
+@pytest.mark.parametrize(
+    ("offline", "no_notice", "enabled"),
+    [("0", "", True), ("false", "0", True), ("", "off", True), ("true", "", False), ("", "yes", False)],
+)
+def test_notice_switches_read_flag_values(
+    monkeypatch: pytest.MonkeyPatch, offline: str, no_notice: str, enabled: bool
+) -> None:
+    # POB_OFFLINE=0 keeps the daemon online, so it must not silence the release notice either
+    monkeypatch.setenv("POB_OFFLINE", offline)
+    monkeypatch.setenv("POB_NO_UPDATE_NOTICE", no_notice)
+    assert self_update.notice_enabled() is enabled
+
 def test_cli_points_other_installs_at_their_updater(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(self_update, "install_method", lambda: "uv")
     result = CliRunner().invoke(main, ["self-update"])

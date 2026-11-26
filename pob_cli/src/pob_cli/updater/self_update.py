@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import IO, Any
 
 from .. import __version__
-from ..os_util import spawn_detached_process, win_hidden_subprocess_kwargs
+from ..os_util import env_flag, spawn_detached_process, win_hidden_subprocess_kwargs
 from .constants import _ASSET_TIMEOUT_SPEC, _AUTO_CHECK_TIMEOUT_SPEC, UpdateError, _to_httpx_timeout
 from .paths import detect_source_checkout_root, is_windows
 from .releases import asset_url, is_newer, latest_release_tag, release_platform_tag, signed_sums
@@ -94,7 +94,7 @@ def refresh_check(runtime_dir: Path, *, proxy: str | None = None, mirror: str | 
 
 
 def notice_enabled() -> bool:
-    return not (os.environ.get("POB_OFFLINE", "").strip() or os.environ.get("POB_NO_UPDATE_NOTICE", "").strip())
+    return not (env_flag("POB_OFFLINE") or env_flag("POB_NO_UPDATE_NOTICE"))
 
 
 def _checked_at(value: Any) -> float:

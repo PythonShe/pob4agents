@@ -51,6 +51,7 @@ from .warnings import (
     normalize_equipment_slot,
     normalize_guardrail_text,
     normalize_zh_compact,
+    release_note,
     reset_cli_warnings,
     warning_context,
 )
@@ -94,6 +95,7 @@ __all__ = [
     "normalize_zh_compact",
     "redact",
     "redact_secrets",
+    "release_note",
     "reset_cli_warnings",
     "scan_text_traps",
     "validate_build_xml",

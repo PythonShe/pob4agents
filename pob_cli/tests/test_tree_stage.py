@@ -132,8 +132,10 @@ def test_stage_fetches_tree_for_existing_folder(poe1: Path, monkeypatch: pytest.
     assert seen == []
 
 
-def test_stage_offline_raises_clean_hint(poe1: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("POB_OFFLINE", "1")
+@pytest.mark.parametrize("value", ["1", "true", " On "])
+def test_stage_offline_raises_clean_hint(poe1: Path, monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    # The daemon reads these spellings as offline too, so it must not download a tree behind them
+    monkeypatch.setenv("POB_OFFLINE", value)
     with pytest.raises(BridgeError, match=r"'3_19'.*TreeData/3_19/tree\.lua.*POB_OFFLINE=1.*Run pob online"):
         stage_missing_tree_versions(_code("3_19"), poe1)
 

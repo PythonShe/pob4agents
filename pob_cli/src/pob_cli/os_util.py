@@ -27,6 +27,15 @@ _CREATE_BREAKAWAY_FROM_JOB = 0x01000000
 _kernel32: Any = None
 
 
+def env_flag(name: str) -> bool:
+    """Read an on/off switch such as POB_OFFLINE: 1/true/yes/on (any case) is on, 0/false/empty is off.
+
+    Every reader of a switch goes through here so that one value never means online to the daemon
+    and offline to the downloader.
+    """
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
+
+
 def _get_kernel32() -> Any:
     """Cached kernel32 handle with OpenProcess/GetExitCodeProcess/CloseHandle signatures bound."""
     global _kernel32
