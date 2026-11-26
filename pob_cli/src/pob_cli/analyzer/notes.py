@@ -13,13 +13,14 @@ from ..errors import DaemonRequestError
 _POB_NOTE_ESCAPE_RE = re.compile(r"\^\d|\^x[0-9A-Fa-f]{6}")
 # Notes are free text from whoever published the build and reach a terminal and an agent's context.
 # Whole ANSI sequences (CSI and OSC) go first, then what is left of the C0/C1 controls, the bidi
-# overrides and marks that reorder displayed text, and the characters a terminal hides yet a model
-# reads (soft hyphen, zero-width space, word joiner, invisible operators, fillers, BOM, interlinear
-# annotation, the Unicode tag block, the variation selector supplement). Tabs and newlines are
-# kept, and so are ZWJ and ZWNJ: emoji sequences and several scripts need them.
+# overrides that reorder displayed text, and the characters a terminal hides yet a model reads
+# (soft hyphen, zero-width space, word joiner, invisible operators, the Hangul filler, BOM,
+# interlinear annotation, the Unicode tag block, the variation selector supplement). Tabs and
+# newlines are kept, and so is what real text needs: ZWJ and ZWNJ, the directional marks of
+# Arabic and Hebrew, the Mongolian vowel separator.
 _ANSI_CSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
 _CONTROL_CHAR_RE = re.compile(
-    r"[\x00-\x08\x0b-\x1f\x7f-\x9f\xad\u061c\u180e\u200b\u200e\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069"
+    r"[\x00-\x08\x0b-\x1f\x7f-\x9f\xad\u200b\u202a-\u202e\u2060-\u2064\u2066-\u2069"
     r"\u3164\ufeff\ufff9-\ufffb\U000e0000-\U000e007f\U000e0100-\U000e01ef]"
 )
 _LINE_BREAKS_RE = re.compile(r"\r\n|[\r\u2028\u2029]")

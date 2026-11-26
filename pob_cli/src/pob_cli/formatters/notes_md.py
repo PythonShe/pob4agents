@@ -61,6 +61,7 @@ def format_notes_markdown(
     if not (cut or clipped):
         return head
 
-    shown = f"first {max_lines} non-empty lines of {total_lines} total lines" if cut else f"all {total_lines} lines"
-    long_lines = f", lines over {max_line_chars} characters shortened" if clipped else ""
-    return f"{head}\n\n_... (showing {shown}{long_lines}; pass `--json` for complete author notes)_"
+    what = [f"showing first {max_lines} non-empty lines of {total_lines} total lines"] if cut else []
+    if clipped:
+        what.append(f"lines over {max_line_chars} characters shortened")
+    return f"{head}\n\n_... ({', '.join(what)}; pass `--json` for complete author notes)_"

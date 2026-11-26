@@ -147,7 +147,7 @@ def test_notes_are_quoted_as_data_and_carry_no_hidden_or_terminal_control_text()
     assert payload["notes"].endswith("\nred\ngnp.exe")
     # Invisible characters a model would still read are removed; a control character cannot shield
     # a colour code; emoji joiners, CJK text and tabs are kept.
-    hidden = "a\U000e0049\U000e0067b\u200b\u200e\xad\u2062\u3164\U000e0101c ^\x00x112233red^\x1b[0m7 \U0001f468\u200d\U0001f469 备注\tok"
+    hidden = "a\U000e0049\U000e0067b\u200b\xad\u2062\u3164\ufff9\U000e0101c ^\x00x112233red^\x1b[0m7 \U0001f468\u200d\U0001f469 备注\tok"
     assert clean_notes_text(hidden) == "abc red \U0001f468\u200d\U0001f469 备注\tok"
 
     md = format_notes_markdown(payload)
@@ -157,6 +157,12 @@ def test_notes_are_quoted_as_data_and_carry_no_hidden_or_terminal_control_text()
     assert all(ln.startswith(">") for ln in body.split("\n\n_...")[0].splitlines())
     assert "\n>\n> _Tip" in body
     # Padding with blank lines cannot stretch the section: a run of them is one quoted blank line.
+    # Directional marks and the Mongolian vowel separator are part of real text and stay.
+    assert clean_notes_text("\u05e9\u200f! \u0627\u061c \u1820\u180e\u1820") == "\u05e9\u200f! \u0627\u061c \u1820\u180e\u1820"
+    # The footer counts nothing it did not show when only a long line was shortened.
+    assert format_notes_markdown(build_notes_payload("a\n\n\n\n" + "x" * 400)).endswith(
+        "_... (lines over 300 characters shortened; pass `--json` for complete author notes)_"
+    )
     padded = format_notes_markdown(build_notes_payload("a\n" + "\n" * 5000 + "b"))
     assert padded.endswith("> a\n>\n> b") and padded.count("\n") < 10
     assert "> #### 2. Gaps" in md
