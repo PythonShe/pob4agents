@@ -35,3 +35,15 @@ Default search uses non-exhaustive fast modes — additive fitting (`narrow_down
   pob tree --socket-radius 26725
   ```
   Lists the nodes around jewel socket `<id>` under a `Radius <name>` heading per ring; a ring beyond the equipped jewel's own radius is marked `outside equipped ... radius (not affected by this jewel)`, so conquered and unconquered passives are not mixed up.
+
+## 4. Direct In-Stock Buyout Lookup (`--trade`)
+```powershell
+# Evaluate all 3 conquerors in PoB and query in-stock instant buyouts (Early-Stop on top batches):
+pob timeless search --jewel "Glorious Vanity" --socket 26725 --conqueror any --trade --budget 5 --currency divine --status securable --trade-limit 5 --max-per-seller 2 [--league Covens] [--realm global|tw]
+
+# Zero-HTTP mode: emit all complexity-safe pre-encoded Trade URLs without calling the API:
+pob timeless search --jewel "Lethal Pride" --socket 26725 --conqueror Kaom --trade --max-trade-batches 0 [--realm tw]
+```
+- **True Multi-Conqueror PoB Evaluation (`--conqueror any`)**: Evaluates each of the jewel's conquerors in PoB, ranks `(conqueror, seed)` pairs by exact PoB gain, and joins trade listings strictly on `(conqueror, seed)` so cross-conqueror keystones never misattribute DPS/EHP. PoE 3.30 `Mazcotl` <-> `Ahuana` (`explicit.pseudo_timeless_jewel_ahuana`) maps transparently in both directions (including `zh-TW` `阿呼阿娜`).
+- **Flags & Complexity Sharding**: `--status securable|available|online|any` (`--securable` shortcut), `--budget` + `--currency divine|chaos`, `--trade-limit` (Early-Stop target & post-sort cap), `--max-per-seller` (applied after PoB gain ranking), `--max-trade-batches` (`0` = 0-HTTP URLs for all shards), `--league`, `--realm global|tw` (`tw` localizes jewel/base/league names to `pathofexile.tw`).
+- **Offline & Error Resilience**: Under `POB_OFFLINE=1`, `--trade` degrades to `urls_only` (`0` HTTP calls) with a warning; on `CookieRequired` (exit `3`), `RateLimited` (exit `4`), or `TradeError` (exit `5`), the full PoB seed table and pre-encoded fallback URLs are still emitted before exiting.

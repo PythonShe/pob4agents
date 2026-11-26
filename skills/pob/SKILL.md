@@ -79,8 +79,5 @@ pob map-regex ['@build.xml'] [--tier both|t16|t17] [--mode safe|brick] [--avoid 
   - Run `pob items --slot <S>` or `pob item inspect --slot <S>` before claiming open affixes, tiers, or `{crafted}` bench slots on rare gear.
 
 ## 4. Deep Reference Guides
-- Triggers, `0.033s` CoC/CDR ticks, CwC, Low-Life & build bricks: `references/triggers-and-mechanics.md`
-- Multi-step what-if, `batch`, `sweep`, `matrix`, `borrow`: `references/whatif-and-batch.md`
-- Official PoE1 trade search, Weighted Sum, Harvest swap, crafting bench: `references/trade-and-bench.md`
-- Timeless / Historic jewel seed search (`pob timeless`): `references/timeless.md`
-- Complete PoE1 3.30 anti-hallucination & patch-drift table: `references/poe1-330-anti-hallucination.md`
+- Triggers (`0.033s` CoC/CDR ticks, CwC, Low-Life & build bricks): `references/triggers-and-mechanics.md` | Multi-step what-if (`batch`/`sweep`/`matrix`/`borrow`): `references/whatif-and-batch.md` | PoE1 3.30 anti-hallucination & patch-drift table: `references/poe1-330-anti-hallucination.md`
+- Official PoE1 trade search, Weighted Sum, Harvest swap & crafting bench: `references/trade-and-bench.md` | Timeless / Historic jewel seed search (`pob timeless`): `references/timeless.md`
