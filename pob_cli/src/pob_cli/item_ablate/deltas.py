@@ -80,6 +80,8 @@ _UTILITY_GUARD_KEYWORDS = (
     # Only the main skill's output is compared: a line for another skill of the build reads as dead.
     "minion",
     "socketed",
+    "grants level",
+    "trigger",
 )
 _UTILITY_STAT_SPECS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("lifeRegen", ("NetLifeRegen", "LifeRegenRecovery", "LifeRegen")),

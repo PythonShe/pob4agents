@@ -58,7 +58,9 @@ def ablate_item_mods(worker: BridgeWorker, slot_name: str) -> dict[str, Any]:
         eval_base_digest = {
             **base_digest,
             "stats": base_direct.get("stats") or base_digest.get("stats") or {},
-            "warnings": list(base_direct.get("warnings") or base_digest.get("warnings") or []),
+            # Its own list even when empty: falling back to the sidebar's warnings would make every
+            # candidate, read through the same pass, look as if it had cleared them.
+            "warnings": list(base_direct.get("warnings") or []),
         }
         base_header = base_digest.get("buildHeader")
         baseline = _build_baseline_block(base_digest)

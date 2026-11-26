@@ -972,6 +972,29 @@ def test_ablate_reads_a_line_dead_only_after_the_main_pass_agrees() -> None:
     assert d["isDeadMod"] is False
     assert d["otherChangedStats"] == ["ManaFlaskChargeGen"]
 
+    # The second look compares like with like: the two paths never report the same set of stats,
+    # and a line nothing depends on stays dead.
+    worker.mod_lines[0]["text"] = "10% increased Light Radius"
+    worker._saved["CODE_INIT"] = copy.deepcopy(worker.mod_lines)
+    worker._stats = lambda: {**_FakeAblateWorker._stats(worker), "ManaFlaskChargeGen": 1.33}  # type: ignore[method-assign]
+    assert ablate_item_mods(worker, "Ring 1")["ablation_deltas"][0]["isDeadMod"] is True  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Minions have 28% increased maximum Life",
+        "+2 to Level of Socketed Duration Gems",
+        "Grants Level 1 Icestorm Skill",
+        "Trigger Level 20 Lightning Bolt when you deal a Critical Strike",
+    ],
+)
+def test_ablate_line_for_another_skill_is_never_an_annul_candidate(text: str) -> None:
+    # Only the main skill's stats are compared, so these read dead whenever another skill is selected.
+    res = ablate_item_mods(_one_line_worker({"section": "explicit", "text": text}), "Ring 1")  # type: ignore[arg-type]
+    assert res["deadModCount"] == 1
+    assert res["annullableDeadModCount"] == 0
+
 
 def test_ablate_new_warning_keeps_a_line_alive_and_fallback_notes_are_listed(monkeypatch: pytest.MonkeyPatch) -> None:
     worker = _one_line_worker({"section": "explicit", "text": "Skills Cost no Mana"})
