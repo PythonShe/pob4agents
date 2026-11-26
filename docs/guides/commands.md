@@ -18,23 +18,26 @@ pob lang [zh-CN|zh-TW|en] [--json]                                              
 pob self-update [--check] [--version X.Y.Z] [--proxy <url>] [--mirror <url>] [--json]  # Update pob itself (standalone builds; signed release only); --check reports latest + the update command for this install; network/disk/swap failure exits 5
 pob profile [ACCOUNT_OR_URL] [--realm pc|xbox|sony|cn] [--league L] [--proxy U] [--json] # 0-engine official profile character list (pathofexile.com public no-cookie, or poe.game.qq.com via env POE_CN_SESSID)
 pob new [--class C] [--asc A] [--secondary-asc S] [--level N] [--target <slug>] [--json]
-pob load [SOURCE] [--char "<name>"] [--league L] [--realm pc|xbox|sony|cn] [--target <slug>] [--json] # XML, Base64, 8 share sites, poe.ninja char URL, or official Intl/CN profile URL
+pob load [SOURCE] [--stage "<idx|title>"] [--spec S] [--item-set I] [--skill-set K] [--char "<name>"] [--league L] [--realm pc|xbox|sony|cn] [--target <slug>] [--json] # XML, Base64, 8 share sites, poe.ninja char URL, or official Intl/CN profile URL; also accepts `#stage=<idx|title>` fragment (`--stage` matches numeric stages by 1-based positional index; `--item-set`/`--skill-set` accept XML IDs)
 pob save <out.xml> | pob export-code [--target <slug>] [--json]                        # Export XML (CLI disk write, R11) or Base64 code
 pob switch-main [--spec S] [--skill-group G] [--skill N] [--part N] [--item-set I] [--skill-set S] [--config-set C] [--loadout L]
 pob undo | pob redo | pob stop [--json]
 
 # Read-Only Inspection, Grounding & One-Shot Diagnosis
 pob ground "<prompt_text>" [--limit 8] [--json]                                        # <15ms daemon-free 3.30 entity cards + PoE2/patch trap alerts
-pob diagnose [SOURCE] [-c|--compare REF] [-q|--ask "<text>"] [--char "<name>"] [--league L] [--realm pc|xbox|sony|cn] [--keep <spec>]... [--no-auto-keep] [--rank|--no-rank] [--section all|summary|gaps|items|skills|cards|upgrades] [--top 5] [--target <slug>] [--ref-target <slug>] [--json] # One-shot: [Env (NOT PoE2) | rev=N] + Pinnacle audit + gaps/bricks/dead-supports/triggers + 3.30 cards + optional --rank upgrades (or dual-build 3-baseline compare)
+pob diagnose [SOURCE] [-c|--compare REF] [-q|--ask "<text>"] [--stage S] [--spec S] [--item-set I] [--skill-set K] [--ref-stage R] [--ref-spec S] [--ref-item-set I] [--ref-skill-set K] [--char "<name>"] [--league L] [--realm pc|xbox|sony|cn] [--keep <spec>]... [--no-auto-keep] [--rank|--no-rank] [--section all|summary|gaps|items|skills|cards|upgrades] [--top 5] [--target <slug>] [--ref-target <slug>] [--json] # One-shot: [Env (NOT PoE2) | rev=N] + Pinnacle audit + thresholdProbes (Suppression/+25%/+50% MRE/CoC ticks/attrs) + gaps/bricks/dead-supports/triggers + 3.30 cards + optional --rank upgrades (or dual-build 3-baseline compare)
 pob summary [--target <slug>] [--json]                                                 # [Env | rev=N] + Offence (Hit/DoT/FullDPS/Minion*), Defence (EHP/MaxHit/Res), Warnings
-pob audit [--keep <spec>]... [--no-auto-keep] [--no-attribution] [--target <slug>] [--json] # [Env | rev=N] + Hard gaps + 4-dim water audit -> Pinnacle (per-item PoB attribution; --keep var|Flask N|flasks|gem|customMods|party)
+pob audit [--keep <spec>]... [--no-auto-keep] [--no-attribution] [--target <slug>] [--json] # [Env | rev=N] + Hard gaps + thresholdProbes + 4-dim water audit -> Pinnacle (per-item PoB attribution; --keep var|Flask N|flasks|gem|customMods|party)
 pob map-regex [SOURCE] [--tier t16|t17|both] [--mode brick|safe] [--avoid TEXT] [--allow TEXT] [--preset-only] [--min-quant N] [--min-pack N] [--client-lang auto|en|zh-CN|zh-TW] [--max-len 250] [--target <slug>] [--json] # PoB-aware <=250-char 0-false-positive T16/T17 map filter regex (supports `--preset-only` daemon-free)
 # Note: `pob map-regex` only outputs passive text for manual copy-paste into the stash search box and never interacts with the game client, game files, or overlays.
 pob config list [--all] [--search "<sub >"] [--with-options] [--target <slug>] [--json] # Active/filtered ConfigTab vars + raw customMods
 pob items [--slot "Weapon 1"|"#1"] [--all] [--raw] [--target <slug>] [--json]          # Equipped table, single slot, or all equipped + allocated jewels raw
 pob item inspect (--slot S | --raw "<item text>" | --file f) [--want "Cold Resistance"]... [--limit 8] [--target <slug>] [--json] # Rare-item affix occupancy and bench candidates (unclamped --limit >= 1); uncertain matches never claim free slots
 pob skills [--group main|1|"label"] [--target <slug>] [--json]                         # Skill groups or per-gem DPS tooltips
-pob tree [--search "<kw>" ...] [--type Keystone|Notable|Mastery|Socket|Ascendancy ...] [--allocated|--unallocated] [--max-cost N] [--show-path] [--masteries] [--socket-radius <id|#1>] [--limit 100] [--json] # --limit 0 returns all matching nodes
+pob tree [SLOT] [--search "<kw>" ...] [--type Keystone|Notable|Mastery|Socket|Ascendancy ...] [--allocated|--unallocated] [--max-cost N] [--show-path] [--masteries] [--socket-radius <id|#1>] [--limit 100] [--full] [--json] # --limit 0 / --full returns all matching nodes
+pob tree prune [SLOT] [--top 15] [--max-branch-pts 5] [--sort dps|ehp|pts] [--include-unsafe] [--target <slug>] [--json] # Connectivity-preserving 1..N pt branch pruning with attr/resist/mana/hit/trigger guardrails (<0.5s)
+pob tree diff [--slot <slug>] [--against ref] [--spec-a A --spec-b B] [--json]         # 5-section structured tree diff (points/ascendancy, keystones, wheels, masteries, clusters & sockets; intra-build `--spec-a/--spec-b` compares passive allocations only while equipped jewels/clusters reflect the slot's active ItemSet)
+pob tree rank-wheels [SLOT] [--top 12] [--max-dist 12] [--max-pts 10] [--sort dps|ehp] [--all-tags] [--no-proxy-sockets] [--target <slug>] [--json] # <2s whole-wheel + unused `<nid>:<eid>` mastery ROI (`ΔDPS%/pt`, `ΔEHP%/pt`), hard vetoes, and strictly isolated `[Proxy Benchmark]` socket/outer-cluster ROI (`proxySocketBenchmarks`, omitted with `--no-proxy-sockets`)
 pob calc "<kw1>" ["<kw2>" ...] [--group G] [--skill S] [--limit 20] [--max-breakdowns 30] [--no-breakdown] [--target <slug>] [--json] # Variadic EN/ZH get_calcs + calcs_breakdown formulas/tables (--max-breakdowns 0 expands all); rows are for `calcsSkill`. --group (index, main or name) with --skill (index, main or gem name) reads another group's active skill; --skill alone takes a gem or group name looked up in every group, or a group number. The Calcs tab is put back as it was
 
 # What-If Simulation (0-residue rollback by default) & Persistent Mutation (--apply)
@@ -61,7 +64,7 @@ pob matrix [Original Pinnacle Uber FlasksOff "Label:Pinnacle,k=v"] [-s <spec>]..
 # ROI Ranking, 3-Baseline A/B Comparison & Transplant
 pob rank-nodes [--stat CombinedDPS|TotalEHP|Life] [--max-dist 5] [--top 15] [--json]
 pob rank-gems [--group main] [--slot N | --add-link] [--field CombinedDPS|FullDPS] [--top 15] [--include-legacy] [--json]
-pob compare [<ref_source>] [--keep <spec>]... [--no-auto-keep] [--target <slug>] [--ref-target <slug>] [--json] # 3 baselines: Original / Target Env Aligned / Pinnacle Dewatered
+pob compare [<ref_source>] [--ref-stage R] [--ref-spec S] [--ref-item-set I] [--ref-skill-set K] [--keep <spec>]... [--no-auto-keep] [--target <slug>] [--ref-target <slug>] [--json] # 3 baselines: Original / Target Env Aligned / Pinnacle Dewatered
 pob borrow [--item-slot "Weapon 1,Amulet"] [--skill-group main] [--ref-target ref] [--apply] [--json]
 
 # Local 0ms Game Data (Daemon-Free, Variadic) & External Economy/PoEDB/Wiki (Cached, Variadic)
