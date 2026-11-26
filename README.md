@@ -2,6 +2,7 @@
 
 **简体中文** | [English](README_EN.md)
 
+[![Bilibili](https://img.shields.io/badge/Bilibili-%E4%BD%BF%E7%94%A8%E6%95%99%E5%AD%A6-FB7299?style=flat-square&logo=bilibili&logoColor=white)](https://www.bilibili.com/video/BV1ijyyzLEHM/)
 [![Discord](https://img.shields.io/badge/Discord-%E5%8A%A0%E5%85%A5%E7%A4%BE%E7%BE%A4-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/tejgNrhjn)
 ![QQ群](https://img.shields.io/badge/QQ%E7%BE%A4-1062048472-12B7F5?style=flat-square&logo=qq&logoColor=white)
 
@@ -36,6 +37,8 @@
 
 ## 我该怎么用？
 
+> **先看实战演示**：[B 站教学视频 — AI 帮我云了个全屏 BD（pob4agents 使用讲解）](https://www.bilibili.com/video/BV1ijyyzLEHM/)
+
 安装完成之后，新开对话窗，给它提供你的 poe.ninja / 国际服或国服官网角色链接 / pob导出链接，它都能认
 
 （国服看下面导入 Cookie 的方法。另外官网接口拿不到盗贼和万神殿，记得确认下）
@@ -44,9 +47,12 @@
 
 尽量选择聪明点的模型（推荐Neon/Opus/Sol），不过你只有大肥鱼也没关系
 
-可以多告诉它你的角色是什么bd、有什么特别容易搞错的核心机制
+**比较好用的实践套路**（视频里演示的核心思路）：
 
-让它多问问你，实测会让准确性大幅提升！
+- **别空手聊，给它参考锚点**：有别人成型的 PoB、攻略帖（比如 Reddit 机制讨论）或实战视频，直接一起丢给它；喂的材料越扎实，它出的方案越靠谱
+- **多告诉它核心机制，让它反问你**：说清你的角色是什么 BD、有哪些特别容易搞错的机制，让它多问问你，实测会让准确性大幅提升！
+- **繁琐活交给它，你来做把关**：批量涂纹身、筛冷门升华和天赋、找装备平替都让它改完导回 PoB，你导入看一眼把不对劲的装备或配置指出来，让它继续调就行
+- **想抄 ninja 作业，自己复制链接发给它**：受平台规则限制它不会自己去爬榜，你挑几个顺眼的 `poe.ninja` 角色链接贴进去让它对比分析，又快又准
 
 它会自动挤掉bd水分，还原真实数据
 
