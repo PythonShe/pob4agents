@@ -10,6 +10,7 @@ pob load "https://pobb.in/..." --target ref
 pob compare                                              # Original / Env-Aligned / Pinnacle Dewatered
 pob borrow --item-slot "Weapon 1,Amulet" [--apply]       # Transplant ref items into main
 ```
+Two-slot commands (`pob compare`, `pob borrow`, `pob tree diff`) require distinct main and reference slots; naming the same slot twice fails with exit code `1`.
 
 ## Scenario Matrix (`pob matrix`)
 ```powershell
@@ -22,6 +23,7 @@ Supported op types (22, aliases in parentheses; 37 names in all): `config` (`con
 - `"skill_add"` / `"skill_set"` / `"skill_rm"` are `"skill"` with that action as the default (an explicit `"action"` in the step still wins, so leave it out): `{"op":"skill_add","group":"main","gem":"Controlled Destruction","level":20,"quality":0}`, `{"op":"skill_rm","group":"main","gem":"Spell Echo"}`.
 - `"config"` takes `"set": {"useFrenzyCharges": true, "enemyIsBoss": "Pinnacle"}` (one or many variables), `"reset"`, and `"customMods"` / `"appendCustomMods"`; a bare `"var"`/`"value"` pair is refused with the `"set"` form to use.
 - `"skill"` supports `"skill_part"` (1-based sub-skill part index for multi-part gems such as `Ice Spear`, `Blade Vortex`, or transfigured variants).
+- **Strict pre-run validation & exit codes:** every batch step is validated before the first step runs with strict field types (integers reject booleans, lists, objects, and fractions like `12.5`; booleans accept `true`/`false`/`0`/`1`/`on`/`off`/`yes`/`no`; `allocate`/`deallocate`/`addMods`/`removeMods`/`gems` take lists, and `replaceMods` takes `[old, new]` pairs). Invalid batch/trade arguments or same-slot `compare`/`borrow`/`tree diff` exit `1` (`pob trade` reserves exit `2` for "no results").
 ```powershell
 pob batch --json-ops '[{"op":"config","set":{"usePowerCharges":true,"enemyIsBoss":"Pinnacle"}},{"op":"anoint","slot":"Amulet","notable":"Whispers of Doom"},{"op":"skill","group":"main","gem":1,"skill_part":2}]' --return summary,audit
 ```
