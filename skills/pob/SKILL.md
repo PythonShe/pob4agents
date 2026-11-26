@@ -44,7 +44,7 @@ pob item inspect (--slot S | --raw "<txt>" | --file f) [--want "<stat>"]... | po
 pob skill add|set|rm --group main ... [--apply] | pob tree change --allocate <id>[,<id>...] [--deallocate <id>[,<id>...]] [--apply] | pob config set <k>=<v> [--custom-mods "<txt>"] [--apply]
 pob batch --json-ops '[...]' [--return "skills,summary"] | pob sweep --scenario Pinnacle --json-variants '[...]' | pob matrix Original Pinnacle Uber FlasksOff
 pob rank-nodes [--stat CombinedDPS|TotalEHP|Life] [--max-dist 5] | pob rank-gems [--group main] [--slot N|--add-link]
-pob bench suggest --slot boots --stat "抗性" | pob trade search --slot ring1 [--auto-query | --stat "生命>=60" --sum "火抗|冰抗|电抗>=80"] [--bench-craft "最大生命"] --budget 5 --currency divine
+pob bench suggest --slot boots --stat "抗性" | pob trade search --slot ring1 [--securable] [--auto-query | --stat "生命>=60" --sum "火抗|冰抗|电抗>=80"] [--bench-craft "最大生命"] [--max-per-seller 2] [--normalize-quality auto|on|off] --budget 5 --currency divine
 pob timeless search --jewel "Lethal Pride" --socket <nodeId|id1,id2|all> --stat CombinedDPS | pob lang [zh-CN|zh-TW|en]
 ```
 
