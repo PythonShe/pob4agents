@@ -45,7 +45,7 @@ pob calc "<kw1>" ["<kw2>" ...] [--group G] [--skill S] [--limit 20] [--max-break
 pob item try [--slot S] (--raw "<text>" | --file f) [--tooltip-only] [--apply]
 pob item edit --slot S [--replace-mod <old> <new>]... [--add-mod <ln>]... [--remove-mod <sub >]... [--allow-illegal-affixes] [--apply] # Enforces the affix cap by default (Rare 3P/3S, Rare jewel 2P/2S, Magic 1P/1S); --allow-illegal-affixes bypasses for synthetic tests (batch/sweep item_edit op: "allowIllegalAffixes": true)
 pob item unequip --slot S [--apply]
-pob item db "<query>" [--type UNIQUE|RARE] [--slot S] [--index N] [--equip] [--with-tooltips] [--with-raw] [--apply] [--limit 15]
+pob item db ["<query>"] [--type UNIQUE|RARE] [--slot S] [--sort M] [--item-type T] [--requirement R] [--obtainable O] [--search-mode M] [--league L] [--page P] [--list-sorts] [--index N] [--equip] [--with-tooltips] [--with-raw] [--apply] [--limit 15] # Filter/rank uniques by PoB engine metric (dps/ehp/maxhit/life/es/...) without requiring QUERY; <=300 items per stat sort
 pob item flask <1..5|all> <on|off> [--apply]
 pob item anoint [--slot Amulet] --notable "<name>" [--index 1..4] [--apply]
 pob skill set --group main [--gem <idx|name>] [--new-gem "<name>"] [--level N] [--quality N] [--enabled true|false] [--count N] [--full-dps true|false] [--allow-legacy] [--allow-illegal-level] [--apply]
