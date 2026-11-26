@@ -215,8 +215,8 @@ def test_ablate_unit_deltas_categories_dead_mod_load_bearing_and_zero_residue() 
     assert "safe candidate" not in md
     assert "Single-Mod Ablation" in md
     assert (
-        "Note: [DEAD-MOD] means 0 direct PoB DPS/EHP/res/attr/speed change under current Config; "
-        "verify mana-cost, flask, or on-kill utility before annulling."
+        "Note: [DEAD-MOD] means no stat PoB calculates changed under the current Config; "
+        "check conditional, on-kill and other utility PoB does not model before annulling."
     ) in md
 
 
@@ -280,8 +280,8 @@ def test_ablate_never_suggests_annul_reforge_on_non_craftable_or_non_explicit(
     assert "annul/reforge" not in md
     assert "safe candidate" not in md
     assert (
-        "Note: [DEAD-MOD] means 0 direct PoB DPS/EHP/res/attr/speed change under current Config; "
-        "verify mana-cost, flask, or on-kill utility before annulling."
+        "Note: [DEAD-MOD] means no stat PoB calculates changed under the current Config; "
+        "check conditional, on-kill and other utility PoB does not model before annulling."
     ) in md
 
 
@@ -321,7 +321,7 @@ def test_ablate_movement_speed_prevents_dead_mod_and_omits_caveat_when_no_dead_m
     assert "-30%" in md
     assert "[DEAD-MOD]" not in md
     assert "ΔPool/Supp" not in md
-    assert "verify mana-cost, flask, or on-kill utility" not in md
+    assert "before annulling" not in md
 
 
 def test_ablate_infinite_total_ehp_transition_max_hit_and_pool_supp_column() -> None:
@@ -673,3 +673,249 @@ Implicits: 0
         assert boots_res["deadModCount"] == 0
     finally:
         worker.stop()
+
+
+def _one_line_worker(
+    line: dict[str, Any],
+    *,
+    raw_tail: str = "",
+    slot_extra: dict[str, Any] | None = None,
+    stats_fn: Any = None,
+) -> _FakeAblateWorker:
+    worker = _FakeAblateWorker()
+    worker.raw_item = f"Rarity: RARE\nReview Band\nCoral Ring\nImplicits: 0\n{_strip_colour(line['text'])}\n{raw_tail}"
+    worker.mod_lines = [{"index": 5, "disabled": False, **line}]
+    worker._saved["CODE_INIT"] = copy.deepcopy(worker.mod_lines)
+    orig_call, orig_stats = worker.call, worker._stats
+
+    def _call(method: str, params: dict[str, Any] | None = None, **kw: Any) -> dict[str, Any]:
+        if method == "list_items":
+            return {
+                "items": [{"id": 7, "title": "Review Band", "baseName": "Coral Ring", "rarity": "RARE"}],
+                "slots": [{"name": "Ring 1", "label": "Ring 1", "selItemId": 7, "shown": True, **(slot_extra or {})}],
+                "useSecondWeaponSet": False,
+            }
+        return orig_call(method, params, **kw)
+
+    def _stats() -> dict[str, Any]:
+        st = orig_stats()
+        if stats_fn is not None:
+            stats_fn(st, 5 in {ml["index"] for ml in worker.mod_lines if not ml.get("disabled")})
+        return st
+
+    worker.call = _call  # type: ignore[method-assign]
+    worker._stats = _stats  # type: ignore[method-assign]
+    history_of(worker).load_build("CODE_INIT", "unit")
+    return worker
+
+
+def _strip_colour(text: str) -> str:
+    return text[8:] if text.startswith("^x") else text
+
+
+def test_ablate_line_moving_only_an_unlisted_stat_is_not_dead_and_is_named() -> None:
+    def _reservation(st: dict[str, Any], on: bool) -> None:
+        st["ManaUnreserved"] = 120.0 if on else 60.0
+
+    worker = _one_line_worker(
+        {"section": "explicit", "text": "10% increased Mana Reservation Efficiency of Skills"}, stats_fn=_reservation
+    )
+    res = ablate_item_mods(worker, "Ring 1")  # type: ignore[arg-type]
+    d = res["ablation_deltas"][0]
+    assert d["deltaDps"] == 0.0 and d["deltaEhp"] == 0.0
+    assert d["isDeadMod"] is False
+    assert d["changedStatCount"] == 1
+    assert d["otherChangedStats"] == ["ManaUnreserved"]
+    assert res["deadModCount"] == 0 and res["annullableDeadModCount"] == 0
+    md = format_item_ablation_markdown(res)
+    assert "| Other" in md and "ManaUnreserved" in md
+    assert "[DEAD-MOD]" not in md and "0-impact" not in md
+
+
+def test_ablate_enchant_section_line_with_crafted_flag_is_not_annullable() -> None:
+    # An anoint is an enchant PoB also flags `crafted`; an Orb of Annulment cannot remove it.
+    worker = _one_line_worker({"section": "enchant", "kind": "crafted", "text": "Allocates Path of the Hunter"})
+    res = ablate_item_mods(worker, "Ring 1")  # type: ignore[arg-type]
+    assert res["ablation_deltas"][0]["slotCategory"] == "enchant"
+    assert res["deadModCount"] == 1
+    assert res["annullableDeadModCount"] == 0
+    assert "0-impact" not in format_item_ablation_markdown(res)
+
+
+@pytest.mark.parametrize(
+    "slot_extra",
+    [{"weaponSet": 2}, {"inactive": True}, {"isFlask": True, "active": False}],
+)
+def test_ablate_inactive_slot_flags_nothing(slot_extra: dict[str, Any]) -> None:
+    worker = _one_line_worker({"section": "explicit", "text": "47% increased Spell Damage"}, slot_extra=slot_extra)
+    res = ablate_item_mods(worker, "Ring 1")  # type: ignore[arg-type]
+    assert res["slotActive"] is False
+    assert res["ablation_deltas"][0]["isDeadMod"] is False
+    assert res["deadModCount"] == 0 and res["annullableDeadModCount"] == 0
+    md = format_item_ablation_markdown(res)
+    assert "Inactive slot" in md
+    assert "[DEAD-MOD]" not in md and "0-impact" not in md
+
+
+def test_ablate_active_flask_and_unsupported_line_get_no_annul_advice() -> None:
+    flask = _one_line_worker(
+        {"section": "explicit", "text": "Grants Immunity to Corrupted Blood"}, slot_extra={"isFlask": True, "active": True}
+    )
+    res = ablate_item_mods(flask, "Ring 1")  # type: ignore[arg-type]
+    assert res["slotActive"] is True
+    assert res["deadModCount"] == 1 and res["annullableDeadModCount"] == 0
+
+    unparsed = _one_line_worker({"section": "explicit", "text": "^xF05050Effect does not Queue"})
+    res = ablate_item_mods(unparsed, "Ring 1")  # type: ignore[arg-type]
+    d = res["ablation_deltas"][0]
+    assert d["unsupported"] is True and d["isDeadMod"] is False
+    assert res["deadModCount"] == 0
+    md = format_item_ablation_markdown(res)
+    assert "[UNSUPPORTED]" in md and "[DEAD-MOD]" not in md
+
+
+def test_ablate_lines_a_toggle_cannot_isolate_are_not_measured() -> None:
+    # A flask's base buff: the engine's reply shows the line still enabled.
+    buff = _one_line_worker({"section": "buff", "text": "+40% to Fire Resistance"})
+    orig_call = buff.call
+
+    def _ignore_toggle(method: str, params: dict[str, Any] | None = None, **kw: Any) -> dict[str, Any]:
+        if method == "item_edit_set":
+            return {"id": 7, "modLines": copy.deepcopy(buff.mod_lines)}
+        assert method != "item_edit_commit", "a line that did not switch off must not be committed"
+        return orig_call(method, params, **kw)
+
+    buff.call = _ignore_toggle  # type: ignore[method-assign]
+    res = ablate_item_mods(buff, "Ring 1")  # type: ignore[arg-type]
+    d = res["ablation_deltas"][0]
+    assert d["unmeasuredReason"] == "toggleIgnored" and d["isDeadMod"] is False
+    assert res["deadModCount"] == 0 and res["unmeasuredCount"] == 1
+    assert not buff.display_open
+    md = format_item_ablation_markdown(res)
+    assert "[NOT-MEASURED]" in md and "[DEAD-MOD]" not in md
+
+    # PoB keeps passives a jewel let the build allocate; its wrapped line is one row of the table.
+    leap = _one_line_worker(
+        {"section": "explicit", "text": "Passives in Radius can be Allocated\nwithout being connected to your tree"}
+    )
+    res = ablate_item_mods(leap, "Ring 1")  # type: ignore[arg-type]
+    d = res["ablation_deltas"][0]
+    assert d["modText"] == "Passives in Radius can be Allocated without being connected to your tree"
+    assert d["unmeasuredReason"] == "passivesStayAllocated" and d["isDeadMod"] is False
+
+
+def test_ablate_fractured_by_colour_cluster_layout_and_disabled_lines() -> None:
+    # The displayed value differs from the raw `{fractured}` text, so only PoB's colour identifies it.
+    worker = _one_line_worker({"section": "explicit", "text": "^xA29160Minions have 15% increased maximum Life"})
+    worker.raw_item = worker.raw_item.replace(
+        "Minions have 15% increased maximum Life", "{fractured}{range:0.5}Minions have (10-20)% increased maximum Life"
+    )
+    worker.mod_lines.append({"index": 6, "section": "explicit", "text": "+10 to Dexterity", "disabled": True})
+    worker._saved["CODE_INIT"] = copy.deepcopy(worker.mod_lines)
+    res = ablate_item_mods(worker, "Ring 1")  # type: ignore[arg-type]
+    assert [d["slotCategory"] for d in res["ablation_deltas"]] == ["fractured"]
+    assert res["deadModCount"] == 1 and res["annullableDeadModCount"] == 0
+    assert res["disabledLineCount"] == 1
+    assert "`1` line(s) already disabled" in format_item_ablation_markdown(res)
+
+    def _dps(st: dict[str, Any], on: bool) -> None:
+        st["CombinedDPS"] = st["FullDPS"] = 100_000.0 if on else 140_000.0
+
+    cluster = _one_line_worker(
+        {"section": "explicit", "text": "1 Added Passive Skill is Overwhelming Malice"}, stats_fn=_dps
+    )
+    orig_call = cluster.call
+
+    def _as_cluster(method: str, params: dict[str, Any] | None = None, **kw: Any) -> dict[str, Any]:
+        out = orig_call(method, params, **kw)
+        if method == "list_items":
+            out["items"][0]["clusterJewel"] = True
+        return out
+
+    cluster.call = _as_cluster  # type: ignore[method-assign]
+    d = ablate_item_mods(cluster, "Ring 1")["ablation_deltas"][0]  # type: ignore[arg-type]
+    assert d["unmeasuredReason"] == "clusterLayoutChanges"
+    assert d["deltaDps"] is None and d["deltaDpsPct"] is None and d["isDeadMod"] is False
+
+
+@pytest.mark.parametrize(
+    ("text", "cluster", "reason"),
+    [
+        # PoB's own wording of every line that lays a cluster jewel out, uniques included.
+        ("Adds 8 Passive Skills", True, "clusterLayoutChanges"),
+        ("2 Added Passive Skills are Jewel Sockets", True, "clusterLayoutChanges"),
+        ("1 Added Passive Skill is Unholy Grace", True, "clusterLayoutChanges"),
+        ("Added Small Passive Skills grant: 12% increased Chaos Damage", True, "clusterLayoutChanges"),
+        ("Added Small Passive Skills grant Nothing", True, "clusterLayoutChanges"),
+        ("Adds 3 Jewel Socket Passive Skills", True, "clusterLayoutChanges"),
+        ("Adds 3 Small Passive Skills which grant nothing", True, "clusterLayoutChanges"),
+        # These change no layout, and the same words on a non-cluster item mean nothing special.
+        ("Added Small Passive Skills also grant: +5 to Strength", True, None),
+        ("Added Small Passive Skills have 25% increased Effect", True, None),
+        ("Adds 8 Passive Skills", False, None),
+        # Thread of Hope: the ring size decides which passives the sibling line frees.
+        ("Only affects Passives in Large Ring", False, "passivesStayAllocated"),
+        ("Passive Skills in Radius of Solipsism can be Allocated without being connected to your tree", False, "passivesStayAllocated"),
+    ],
+)
+def test_ablate_unmeasured_rules_follow_pob_wording(text: str, cluster: bool, reason: str | None) -> None:
+    def _moved(st: dict[str, Any], on: bool) -> None:
+        st["CombinedDPS"] = st["FullDPS"] = 100_000.0 if on else 80_000.0
+        st["Life"] = 4000.0 if on else 3000.0
+
+    worker = _one_line_worker({"section": "explicit", "text": text}, stats_fn=_moved)
+    orig_call = worker.call
+
+    def _call(method: str, params: dict[str, Any] | None = None, **kw: Any) -> dict[str, Any]:
+        out = orig_call(method, params, **kw)
+        if method == "list_items":
+            out["items"][0]["clusterJewel"] = cluster
+        return out
+
+    worker.call = _call  # type: ignore[method-assign]
+    res = ablate_item_mods(worker, "Ring 1")  # type: ignore[arg-type]
+    d = res["ablation_deltas"][0]
+    assert d.get("unmeasuredReason") == reason
+    assert d["isDeadMod"] is False
+    if reason == "clusterLayoutChanges":
+        # The candidate was a different allocation: no number of it is reported, in any column.
+        assert d["deltaDps"] is None and d["deltaLife"] is None and d["otherChangedStats"] == []
+        md = format_item_ablation_markdown(res)
+        assert "-20,000" not in md and "Life-1000" not in md
+    elif reason is None:
+        assert d["deltaDps"] == -20_000.0 and d["deltaLife"] == -1000.0
+    json.dumps(res, allow_nan=False)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Grants Level 22 Wrath Skill",
+        # PoB's unique data mostly has no trailing "Skill", and triggers are worded differently again.
+        "Grants Level 20 Aspect of the Spider",
+        "Trigger Level 10 Summon Spectral Wolf on Kill",
+    ],
+)
+def test_ablate_granted_skill_that_moves_the_main_skill_has_no_numbers(text: str) -> None:
+    def _dps(st: dict[str, Any], on: bool) -> None:
+        st["CombinedDPS"] = st["FullDPS"] = 100_000.0 if on else 40_000.0
+        st["AreaOfEffectMod"] = 1.0 if on else 1.4
+
+    worker = _one_line_worker({"section": "explicit", "text": text}, stats_fn=_dps)
+    orig_call = worker.call
+
+    def _header(method: str, params: dict[str, Any] | None = None, **kw: Any) -> dict[str, Any]:
+        if method == "get_build_header":
+            granted = not any(ml.get("disabled") for ml in worker.mod_lines)
+            groups = ["Granted", "Fireball", "Arc"] if granted else ["Fireball", "Arc"]
+            return {"mainSocketGroup": {"index": 2, "list": groups}}
+        return orig_call(method, params, **kw)
+
+    worker.call = _header  # type: ignore[method-assign]
+    res = ablate_item_mods(worker, "Ring 1")  # type: ignore[arg-type]
+    d = res["ablation_deltas"][0]
+    assert d["unmeasuredReason"] == "mainSkillShifted"
+    assert d["deltaDps"] is None and d["deltaDpsPct"] is None
+    assert d["otherChangedStats"] == []
+    assert d["isDeadMod"] is False
+    assert "AreaOfEffectMod" not in format_item_ablation_markdown(res)

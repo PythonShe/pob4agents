@@ -1,9 +1,4 @@
-"""Single-mod Copy-on-Write ablation (`pob item inspect <slot> --ablate`).
-
-Measures each toggleable mod line's independent marginal impact on DPS, EHP,
-resistances, attributes, and equipment/gem requirements using PoB's native
-`ToggleDisplayItemModLine` inside a zero-residue `BuildTransaction`.
-"""
+"""What one switched-off mod line did: categories, the delta row, and the lines a toggle cannot isolate."""
 
 from __future__ import annotations
 
@@ -11,19 +6,8 @@ import math
 import re
 from typing import Any
 
-from .analyzer.inspectors import resolve_slot_name
-from .bridge_client import BridgeWorker
-from .bridge_protocol import get_worker_caps
-from .errors import DaemonRequestError
-from .formatters import _parse_numeric_or_none, strip_pob_escapes
-from .snapshot import (
-    BuildScope,
-    BuildTransaction,
-    _finite_float,
-    _safe_min_ele_max_hit,
-    capture_digest,
-    capture_direct_digest,
-)
+from ..formatters import _parse_numeric_or_none, strip_pob_escapes
+from ..snapshot import _finite_float, _safe_min_ele_max_hit
 
 _EPS = 1e-4
 _MAX_HIT_KEYS = (
@@ -34,6 +18,46 @@ _MAX_HIT_KEYS = (
     "ChaosMaximumHitTaken",
 )
 _ANNULLABLE_CATEGORIES = frozenset({"explicit", "crafted"})
+# Where a line sits on the item decides what can remove it. An anoint, a cluster jewel's passive
+# lines and other enchants carry PoB's `crafted` flag as well, so the section is read first.
+_SECTION_CATEGORIES = frozenset({"buff", "rune", "enchant", "scourge", "implicit", "crucible"})
+# PoB's `colorCodes.UNSUPPORTED`: `formatModLine` paints a line with it when the parser left part of
+# the line unread, so toggling it cannot change the calculation whatever it does in game.
+_UNSUPPORTED_COLOUR = "^xf05050"
+# `colorCodes.FRACTURED`. The raw `{fractured}` line cannot always be matched by text: it keeps its
+# `(10-20)` range where the displayed line has the rolled value.
+_FRACTURED_COLOUR = "^xa29160"
+# Lines whose toggle PoB cannot isolate; each is reported with an `unmeasuredReason` instead of a verdict.
+# PoB re-reads allocation paths on an item change only for cluster and timeless jewels, so passives
+# such a jewel let the build take stay allocated when its line (or its ring size) is off.
+_ALLOCATES_UNCONNECTED = ("without being connected to your tree", "only affects passives in")
+# A cluster jewel's size, type, socket and notable lines lay its passives out. With one off the nodes
+# are renumbered or gone, the build's allocation lands elsewhere, and the delta is that reshuffle.
+# "also grant" and "have N% increased Effect" lines change no layout and stay measured.
+_CLUSTER_LAYOUT_RE = re.compile(
+    r"^adds \d+ (?:jewel socket |small )?passive skills?"
+    r"|^added small passive skills grant"
+    r"|added passive skills? (?:is|are) ",
+    re.IGNORECASE,
+)
+# Reasons under which the candidate was a different build, not the same one less a line: its
+# numbers are withheld. (Removing a granted skill's socket group shifts the groups after it, so
+# `mainSocketGroup` can point at another skill.)
+_NO_NUMBERS_REASONS = frozenset({"mainSkillShifted", "clusterLayoutChanges"})
+_MAX_OTHER_STATS = 8
+# Light radius moves these two and nothing a build is judged by; a line that moves only them is dead.
+# A build that scales something with light radius moves other stats too, and is not caught here.
+_COSMETIC_STATS = frozenset({"LightRadiusInc", "LightRadiusMod"})
+# Stats a row reports in a delta field of its own; `otherChangedStats` lists what is left.
+_REPORTED_STATS = frozenset(
+    {
+        "FullDPS", "CombinedDPS", "MinionCombinedDPS", "TotalEHP", "Life", "Mana", "EnergyShield",
+        "EffectiveSpellSuppressionChance", "EffectiveMovementSpeedMod", "MovementSpeedMod", "MovementSpeed",
+        "FireResist", "ColdResist", "LightningResist", "ChaosResist",
+        "FireResistOverCap", "ColdResistOverCap", "LightningResistOverCap", "ChaosResistOverCap",
+        "Str", "Dex", "Int", "Omni",
+    }
+)  # fmt: skip
 _NON_CRAFTABLE_RARITIES = frozenset({"UNIQUE", "RELIC"})
 _TAG_PREFIX_RE = re.compile(r"^(?:\{[^}]+\})+")
 _CJK_RE = re.compile(r"[\u4e00-\u9fff]")
@@ -100,12 +124,16 @@ def _extract_fractured_keys(raw_text: str) -> set[str]:
 def _slot_category(entry: dict[str, Any], fractured_keys: set[str]) -> str:
     kind = str(entry.get("kind") or "").strip().lower()
     section = str(entry.get("section") or "explicit").strip().lower()
+    if section in _SECTION_CATEGORIES:
+        return section
     if kind == "crafted":
         return "crafted"
     if kind == "custom":
         return "custom"
     if kind == "crucible":
         return "crucible"
+    if str(entry.get("text") or "").lower().startswith(_FRACTURED_COLOUR):
+        return "fractured"
     text_key = _norm_mod_key(str(entry.get("text") or ""))
     if text_key and text_key in fractured_keys:
         return "fractured"
@@ -128,6 +156,51 @@ def _parse_item_craftability(raw_text: str, item_meta: dict[str, Any]) -> tuple[
             mirrored = True
     craftable = (rarity not in _NON_CRAFTABLE_RARITIES) and not corrupted and not mirrored
     return rarity, corrupted, mirrored, craftable
+
+
+def _slot_is_active(slot: dict[str, Any], active_weapon_set: int) -> bool:
+    """Whether the slot's item takes part in the calculation: not a swapped-out weapon or an unticked flask."""
+    if slot.get("inactive"):
+        return False
+    weapon_set = slot.get("weaponSet")
+    if weapon_set and int(weapon_set) != active_weapon_set:
+        return False
+    return not (slot.get("isFlask") and slot.get("active") is False)
+
+
+def _line_switched_off(edit_state: Any, line_idx: int) -> bool:
+    """Whether `item_edit_set` took: PoB rebuilds a flask's base buff lines on every parse, ignoring the toggle."""
+    lines = edit_state.get("modLines") if isinstance(edit_state, dict) else None
+    entry = next((m for m in lines or [] if isinstance(m, dict) and m.get("index") == line_idx), None)
+    return entry is None or bool(entry.get("disabled"))
+
+
+def _main_group_label(header: Any) -> Any:
+    group = header.get("mainSocketGroup") if isinstance(header, dict) else None
+    if not isinstance(group, dict):
+        return None
+    entries = group.get("list") or []
+    idx = int(group.get("index") or 1)
+    return entries[idx - 1] if 0 < idx <= len(entries) else None
+
+
+def _stat_changed(before: Any, after: Any) -> bool:
+    if before == after:
+        return False
+    fb, fa = _parse_numeric_or_none(before), _parse_numeric_or_none(after)
+    if fb is None or fa is None:
+        return True
+    if math.isnan(fb) or math.isnan(fa):
+        return math.isnan(fb) != math.isnan(fa)
+    if not (math.isfinite(fb) and math.isfinite(fa)):
+        return fb != fa
+    return abs(fa - fb) > max(1e-6, 1e-9 * max(abs(fa), abs(fb)))
+
+
+def _changed_stats(base_stats: dict[str, Any], cand_stats: dict[str, Any]) -> list[str]:
+    """Every calc stat that differs between the two digests, in a stable order."""
+    keys = (base_stats.keys() | cand_stats.keys()) - _COSMETIC_STATS
+    return sorted(k for k in keys if _stat_changed(base_stats.get(k), cand_stats.get(k)))
 
 
 def _has_utility_guard(mod_text: str) -> bool:
@@ -271,6 +344,8 @@ def _eval_single_mod_delta(
     slot_category: str,
     base_digest: dict[str, Any],
     cand_digest: dict[str, Any],
+    unmeasured: str | None = None,
+    cluster_jewel: bool = False,
 ) -> dict[str, Any]:
     b_stats = base_digest.get("stats") or {}
     c_stats = cand_digest.get("stats") or {}
@@ -296,13 +371,11 @@ def _eval_single_mod_delta(
         raw_d_ehp = cand_ehp_num - base_ehp_num
         delta_ehp = round(raw_d_ehp, 2)
         delta_ehp_pct = round((raw_d_ehp / base_ehp_num * 100.0) if abs(base_ehp_num) > _EPS else 0.0, 3)
-        ehp_changed = abs(raw_d_ehp) > _EPS
     else:
         delta_ehp = None
         delta_ehp_pct = None
         b_tok, c_tok = _ehp_token(base_ehp_num), _ehp_token(cand_ehp_num)
         ehp_transition = f"{b_tok}->{c_tok}"
-        ehp_changed = b_tok != c_tok
 
     max_hit_changed = any(_stat_delta_or_changed(b_stats.get(k), c_stats.get(k))[1] for k in _MAX_HIT_KEYS)
     phys_mh_d, _ = _stat_delta_or_changed(b_stats.get("PhysicalMaximumHitTaken"), c_stats.get("PhysicalMaximumHitTaken"))
@@ -338,29 +411,20 @@ def _eval_single_mod_delta(
         set(cand_digest.get("warnings") or []),
     )
 
-    extra_dps_changed = any(
-        abs(_finite_float(c_stats.get(k)) - _finite_float(b_stats.get(k))) > _EPS
-        for k in ("FullDPS", "CombinedDPS", "TotalDPS", "TotalDotDPS", "MinionCombinedDPS")
-    )
-    all_zero = (
-        abs(delta_dps) <= _EPS
-        and not extra_dps_changed
-        and not ehp_changed
-        and not max_hit_changed
-        and not d_util
-        and all(abs(v) <= _EPS for v in d_res.values())
-        and all(abs(v) <= _EPS for v in d_ov.values())
-        and all(abs(v) <= _EPS for v in d_attr.values())
-        and abs(d_life) <= _EPS
-        and abs(d_mana) <= _EPS
-        and abs(d_es) <= _EPS
-        and abs(d_supp) <= _EPS
-        and abs(d_ms_raw) <= _EPS
-    )
-    is_dead = all_zero and not bricks
+    # PoB wraps a long line; one row of the table holds one line of text.
+    mod_text = " ".join(strip_pob_escapes(str(entry.get("text") or "")).split())
+    if unmeasured is None and any(tok in mod_text.lower() for tok in _ALLOCATES_UNCONNECTED):
+        unmeasured = "passivesStayAllocated"
+    if unmeasured is None and cluster_jewel and _CLUSTER_LAYOUT_RE.search(mod_text):
+        unmeasured = "clusterLayoutChanges"
+    # A line is dead only when nothing PoB calculates moved: reservation, ailment avoidance,
+    # recovery or a max hit count as much as the headline columns do.
+    changed = _changed_stats(b_stats, c_stats)
+    warnings_changed = set(base_digest.get("warnings") or []) != set(cand_digest.get("warnings") or [])
+    unsupported = str(entry.get("text") or "").lower().startswith(_UNSUPPORTED_COLOUR)
+    is_dead = not changed and not warnings_changed and not bricks and not unsupported and not unmeasured
 
-    mod_text = strip_pob_escapes(str(entry.get("text") or "")).strip()
-    mod_text_zh = strip_pob_escapes(str(entry.get("textZh") or "")).strip()
+    mod_text_zh = " ".join(strip_pob_escapes(str(entry.get("textZh") or "")).split())
     out: dict[str, Any] = {
         "lineIndex": int(entry.get("index") or 0),
         "modText": mod_text,
@@ -377,6 +441,8 @@ def _eval_single_mod_delta(
         "deltaResists": d_res,
         "deltaResistOverCaps": d_ov,
         "deltaAttributes": d_attr,
+        "changedStatCount": len(changed),
+        "otherChangedStats": [k for k in changed if k not in _REPORTED_STATS and k != primary_key][:_MAX_OTHER_STATS],
         "bricksRequirements": bricks,
         "isDeadMod": is_dead,
     }
@@ -390,117 +456,18 @@ def _eval_single_mod_delta(
         out["modTextZh"] = mod_text_zh
     if brick_reasons:
         out["brickedReasons"] = brick_reasons
+    if unsupported:
+        out["unsupported"] = True
+    if unmeasured:
+        out["unmeasuredReason"] = unmeasured
+        if unmeasured in _NO_NUMBERS_REASONS:
+            for key in (
+                "deltaDps", "deltaDpsPct", "deltaEhp", "deltaEhpPct", "deltaLife", "deltaMana",
+                "deltaEnergyShield", "deltaSuppression", "deltaMovementSpeed",
+            ):  # fmt: skip
+                out[key] = None
+            out.update(deltaResists={}, deltaResistOverCaps={}, deltaAttributes={}, otherChangedStats=[])
+            out["bricksRequirements"] = False
+            for key in ("brickedReasons", "ehpTransition", "deltaUtility", "deltaMaxHits"):
+                out.pop(key, None)
     return out
-
-
-def ablate_item_mods(worker: BridgeWorker, slot_name: str) -> dict[str, Any]:
-    """Toggle each mod line off on an equipped item in a 0-residue CoW transaction."""
-    caps = get_worker_caps(worker)
-    if not caps.get("itemModLineToggle"):
-        raise DaemonRequestError(
-            "Single-mod ablation (`--ablate`) requires engine capability `itemModLineToggle` "
-            "(PoB 2.69+ / updated PobTools-zh bridge). Run `pob update` to upgrade your local engine."
-        )
-
-    with BuildTransaction(worker, scope=BuildScope.ACTIVE_SETS, will_commit=False) as tx:
-        items_res = worker.call("list_items", {})
-        resolved_slot = resolve_slot_name(worker, slot_name, items_res=items_res)
-        slot_obj = next((s for s in (items_res.get("slots") or []) if s.get("name") == resolved_slot), None)
-        item_id = slot_obj.get("selItemId") if isinstance(slot_obj, dict) else None
-        if not item_id:
-            raise DaemonRequestError(
-                f"Slot '{resolved_slot}' is empty; equip an item before running `--ablate`."
-            )
-        item_id = int(item_id)
-        item_meta = next((it for it in (items_res.get("items") or []) if it.get("id") == item_id), {})
-
-        base_digest = capture_digest(worker)
-        # Align baseline warnings with `capture_direct_digest` so zh-CN/zh-TW translated warnings
-        # compare in the same locale/format as each ablated candidate pass.
-        base_direct = capture_direct_digest(worker, base_digest=base_digest)
-        eval_base_digest = {**base_digest, "warnings": list(base_direct.get("warnings") or base_digest.get("warnings") or [])}
-        baseline = _build_baseline_block(base_digest)
-
-        edit_state = worker.call("item_edit_begin", {"id": item_id})
-        try:
-            raw_text = str(edit_state.get("raw") or "")
-            mod_lines = [ml for ml in (edit_state.get("modLines") or []) if isinstance(ml, dict)]
-        finally:
-            try:
-                worker.call("item_edit_cancel", {})
-            except Exception:
-                pass
-
-        fractured_keys = _extract_fractured_keys(raw_text)
-        deltas: list[dict[str, Any]] = []
-
-        for ml in mod_lines:
-            if ml.get("disabled"):
-                continue
-            line_idx = int(ml.get("index") or 0)
-            if line_idx <= 0:
-                continue
-            edit_open = False
-            try:
-                worker.call("item_edit_begin", {"id": item_id})
-                edit_open = True
-                worker.call("item_edit_set", {"modLine": {"index": line_idx, "enabled": False}})
-                # `bridge.lua:5477` calls `AddDisplayItem(p.equip == false)`. Because `item_edit_begin`
-                # preserves `newItem.id = src.id`, `ItemsTab:AddItem` replaces `tab.items[item_id]` in place
-                # without re-auto-equipping the item into another slot (e.g. Ring 2 stays in Ring 2).
-                worker.call("item_edit_commit", {"equip": True})
-                edit_open = False
-                cand_digest = capture_direct_digest(worker, base_digest=base_digest)
-            finally:
-                if edit_open:
-                    try:
-                        worker.call("item_edit_cancel", {})
-                    except Exception:
-                        pass
-                tx.restore(rebuild=False)
-
-            deltas.append(
-                _eval_single_mod_delta(
-                    entry=ml,
-                    slot_category=_slot_category(ml, fractured_keys),
-                    base_digest=eval_base_digest,
-                    cand_digest=cand_digest,
-                )
-            )
-
-        restore_check = tx.rollback_verified(base_digest)
-        rarity, corrupted, mirrored, craftable = _parse_item_craftability(raw_text, item_meta)
-        annullable_dead_count = sum(
-            1
-            for d in deltas
-            if craftable
-            and d["isDeadMod"]
-            and d["slotCategory"] in _ANNULLABLE_CATEGORIES
-            and not _has_utility_guard(str(d.get("modText") or ""))
-        )
-        item_name = strip_pob_escapes(
-            str(item_meta.get("title") or item_meta.get("name") or resolved_slot)
-        )
-        item_name_zh = strip_pob_escapes(
-            str(item_meta.get("titleZh") or item_meta.get("nameZh") or "")
-        )
-        out: dict[str, Any] = {
-            "slotName": resolved_slot,
-            "itemId": item_id,
-            "itemName": item_name,
-            "itemRarity": rarity or None,
-            "itemCorrupted": corrupted,
-            "itemMirrored": mirrored,
-            "craftable": craftable,
-            "raw": raw_text,
-            "primaryDpsKey": baseline["primaryDpsKey"],
-            "baseline": baseline,
-            "ablation_deltas": deltas,
-            "deadModCount": sum(1 for d in deltas if d["isDeadMod"]),
-            "annullableDeadModCount": annullable_dead_count,
-            "loadBearingCount": sum(1 for d in deltas if d["bricksRequirements"]),
-            "restoreCheck": restore_check,
-        }
-        if item_name_zh and item_name_zh != item_name:
-            out["itemNameZh"] = item_name_zh
-        return out

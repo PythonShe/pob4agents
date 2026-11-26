@@ -6,6 +6,8 @@ from typing import Any
 
 from .primitives import fmt_num, fmt_signed_pct, render_table, restore_warning, strip_pob_escapes
 
+_OTHER_STATS_SHOWN = 3
+
 
 def _fmt_res_deltas(d_res: dict[str, Any], d_ov: dict[str, Any] | None = None) -> str:
     parts: list[str] = []
@@ -75,6 +77,15 @@ def _fmt_ehp_cell(d: dict[str, Any]) -> str:
     return fmt_signed_pct(d.get("deltaEhp"), d.get("deltaEhpPct"))
 
 
+def _fmt_other_stats(d: dict[str, Any]) -> str:
+    """Names of what else PoB recalculated, for a row whose own columns are all empty."""
+    others = [str(k) for k in (d.get("otherChangedStats") or [])]
+    if not others:
+        return "-"
+    more = int(d.get("changedStatCount") or 0) - _OTHER_STATS_SHOWN
+    return ", ".join(others[:_OTHER_STATS_SHOWN]) + (f" (+{more})" if more > 0 else "")
+
+
 def _row_sort_key(d: dict[str, Any]) -> tuple[Any, ...]:
     is_dead = 1 if d.get("isDeadMod") else 0
     bricks = 0 if d.get("bricksRequirements") else 1
@@ -107,11 +118,17 @@ def format_item_ablation_markdown(ablation: dict[str, Any]) -> str:
     if not deltas:
         lines.append("- _(No toggleable mod lines found on this item.)_")
         return "\n".join(lines)
+    if ablation.get("slotActive", True) is False:
+        lines.append(
+            "- **Inactive slot**: this item is outside the current calculation (swapped-out weapon set, "
+            "unticked flask or unallocated socket), so every line reads 0 and none is flagged."
+        )
 
     ranked = sorted(deltas, key=_row_sort_key)
     show_pool = any(_fmt_pool_supp_deltas(d) != "-" for d in ranked)
     show_ms = any(abs(float(d.get("deltaMovementSpeed") or 0.0)) > 1e-4 for d in ranked)
     rows: list[list[Any]] = []
+    other_cells: list[str] = []
     for d in ranked:
         mod_en = strip_pob_escapes(str(d.get("modText") or "-"))
         mod_zh = strip_pob_escapes(str(d.get("modTextZh") or ""))
@@ -121,6 +138,10 @@ def format_item_ablation_markdown(ablation: dict[str, Any]) -> str:
             flags.append("[REQ-LOAD-BEARING]")
         if d.get("isDeadMod"):
             flags.append("[DEAD-MOD]")
+        if d.get("unsupported"):
+            flags.append("[UNSUPPORTED]")
+        if d.get("unmeasuredReason"):
+            flags.append("[NOT-MEASURED]")
         row: list[Any] = [
             d.get("lineIndex"),
             d.get("slotCategory") or "-",
@@ -139,6 +160,12 @@ def format_item_ablation_markdown(ablation: dict[str, Any]) -> str:
         if show_ms:
             ms_v = float(d.get("deltaMovementSpeed") or 0.0)
             row.append(f"{ms_v:+.0f}%" if abs(ms_v) > 1e-4 else "-")
+        # A line can be live with every column empty (reservation, ailment avoidance, recovery):
+        # name what moved, so the missing [DEAD-MOD] flag is explained.
+        ehp_side = [t.strip() for t in str(d.get("ehpTransition") or "").split("->")]
+        ehp_still = len(ehp_side) == 2 and ehp_side[0] == ehp_side[1]
+        empty = all(c in ("0", "-") or (i == 1 and ehp_still) for i, c in enumerate(row[3:]))
+        other_cells.append(_fmt_other_stats(d) if empty else "-")
         row.append(" ".join(flags) or "-")
         rows.append(row)
 
@@ -148,6 +175,10 @@ def format_item_ablation_markdown(ablation: dict[str, Any]) -> str:
     headers.extend(["ΔRes", "ΔAttr"])
     if show_ms:
         headers.append("ΔMS")
+    if any(c != "-" for c in other_cells):
+        headers.append("Other")
+        for row, cell in zip(rows, other_cells, strict=True):
+            row.insert(len(row) - 1, cell)
     headers.append("Flags")
     lines.append(render_table(headers, rows))
 
@@ -177,7 +208,18 @@ def format_item_ablation_markdown(ablation: dict[str, Any]) -> str:
         lines.append("- **Crafting Notes**: " + "; ".join(summary_bits) + ".")
     if dead_cnt > 0 or any(d.get("isDeadMod") for d in deltas):
         lines.append(
-            "_Note: [DEAD-MOD] means 0 direct PoB DPS/EHP/res/attr/speed change under current Config; "
-            "verify mana-cost, flask, or on-kill utility before annulling._"
+            "_Note: [DEAD-MOD] means no stat PoB calculates changed under the current Config; "
+            "check conditional, on-kill and other utility PoB does not model before annulling._"
         )
+    if any(d.get("unmeasuredReason") for d in deltas):
+        lines.append(
+            "_Note: [NOT-MEASURED] lines cannot be isolated by switching them off (a flask's base buff, passives a "
+            "jewel lets the build allocate, a cluster jewel's layout, a granted skill that moves the main skill): "
+            "compare with `pob item unequip`, `pob item try` or `pob item flask` instead._"
+        )
+    disabled_cnt = int(ablation.get("disabledLineCount") or 0)
+    if disabled_cnt:
+        lines.append(f"_Note: `{disabled_cnt}` line(s) already disabled on the item were left out._")
+    if any(d.get("unsupported") for d in deltas):
+        lines.append("_Note: [UNSUPPORTED] lines are ones PoB cannot parse, so their effect was not measured._")
     return "\n".join(lines)
