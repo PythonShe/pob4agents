@@ -35,8 +35,11 @@ def format_notes_markdown(
     if not notes or meta.get("hasNotes") is False:
         return ""
 
-    all_lines = notes.splitlines()
-    total_lines = int(meta.get("lineCount") or len(all_lines))
+    # A run of blank lines is one blank line: the cap counts lines of text, and padding must not
+    # stretch the section past it.
+    raw_lines = notes.splitlines()
+    all_lines = [ln for i, ln in enumerate(raw_lines) if ln.strip() or (i > 0 and raw_lines[i - 1].strip())]
+    total_lines = int(meta.get("lineCount") or len(raw_lines))
     non_empty_total = sum(1 for ln in all_lines if ln.strip())
 
     kept = all_lines
