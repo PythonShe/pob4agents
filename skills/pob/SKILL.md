@@ -11,9 +11,10 @@ description: Path of Exile 1 (PoE1 3.30, 流放之路1) build diagnosis, headles
 3. **Fast Subcommands (`<0.3s`) for Follow-Ups & CoW `batch`/`sweep`/`matrix` for Variants** — use `pob diagnose` once to load and baseline a build; for follow-up questions on an already loaded slot, prefer `<0.3s` targeted subcommands (`pob summary`, `pob items`, `pob skills`, `pob calc`, `pob tree`) instead of re-running heavy ranking. All mutators (`skill`/`item`/`tree`/`config`/`batch`/`sweep`/`matrix`) use in-memory shallow Lua CoW snapshots (0-residue rollback by default; pass `--apply` only to persist). Prefer `pob batch`, `pob sweep`, or `pob matrix` to compare multiple variants in one call. Markdown is default; pass `--json` (`--compact` / `--out <file>`) whenever structured fields help, and run `pob help --brief` or `pob <cmd> --help` whenever checking flags. Never print or inspect `POESESSID` / `POE_CN_SESSID` in shell commands (`pob status` shows boolean auth state).
 
 ## 1. Canonical Fast Recipes
-- **A. Initial build diagnosis & official profile import**:
+- **A. Initial build diagnosis, cold-start skeleton & official profile import**:
   ```powershell
   pob diagnose @build.xml -q "<player question>" [--keep SPEC]... [--top 5] [--json]
+  pob new --class Witch --asc Necromancer --level 90; pob batch --json-ops '[...]' --apply # Cold-start theorycraft from scratch (sequential)
   pob profile "https://www.pathofexile.com/account/view-profile/<Acc-1234>" [--realm pc|cn] [--league L] # 0-engine char list (public intl needs no cookie; CN uses env POE_CN_SESSID)
   pob diagnose "https://www.pathofexile.com/account/view-profile/<Acc-1234>" --char "<name>" -q "<question>"
   ```
@@ -30,6 +31,7 @@ description: Path of Exile 1 (PoE1 3.30, 流放之路1) build diagnosis, headles
   pob data unique [QUERY] [--mod "<stat_kw>"] [--slot S] | pob data mod "<q>" [--slot S] [--ilvl N] | pob data translate "<EN|中文>"
   pob data tree [Q...] [--type Keystone|Notable|Ascendancy|Bloodline] [--asc "<Asc>"] | pob data runegraft <query> | pob data tattoo <query> [--kind tattoo|runegraft]
   pob data tick <base_cd|coc|cospri|mjolner|poet|cwdt|soa> [--cdr N] [--aps R]        # Exact 0.033s tick & overspeed math
+  pob meta [--skill "<EN|中文>"] [--class "<EN|中文>"] [--league L]                   # Compliant poe.ninja league meta share (EN/ZH/slang)
   ```
 - **D. Trade, Crafting Bench & `<3.5s` Timeless upgrades**:
   Run `pob diagnose @build.xml --no-rank` (or `pob timeless list`) for gaps & jewel socket IDs, then run `pob trade search`, `pob bench suggest`, or `pob timeless search` (hybrid in-engine PRNG+mmap synthesis for Legion & 3.30 Abyss jewels).
