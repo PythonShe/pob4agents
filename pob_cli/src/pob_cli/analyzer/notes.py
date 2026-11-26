@@ -11,9 +11,16 @@ from ..errors import DaemonRequestError
 # Matches PoB's Lua `StripEscapes(text)`:
 #   text:gsub("%^%d", ""):gsub("%^x%x%x%x%x%x%x", "")
 _POB_NOTE_ESCAPE_RE = re.compile(r"\^\d|\^x[0-9A-Fa-f]{6}")
-# Strip untrusted ANSI CSI sequences and C0/DEL control bytes (preserving \n and \t).
-_ANSI_CSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
-_CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+# Notes are free text from whoever published the build and reach a terminal and an agent's context.
+# Whole ANSI sequences (CSI and OSC) go first, then what is left of the C0/C1 controls, the bidi
+# overrides that reorder displayed text, and the characters a terminal hides yet a model reads
+# (zero-width space, word joiner, BOM, the Unicode tag block). Tabs and newlines are kept, and so
+# are ZWJ and ZWNJ: emoji sequences and several scripts need them.
+_ANSI_CSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
+_CONTROL_CHAR_RE = re.compile(
+    r"[\x00-\x08\x0b-\x1f\x7f-\x9f\u200b\u2060\ufeff\u202a-\u202e\u2066-\u2069\U000e0000-\U000e007f]"
+)
+_LINE_BREAKS_RE = re.compile(r"\r\n|[\r\u2028\u2029]")
 
 
 def strip_pob_note_escapes(text: str | None) -> str:
@@ -27,7 +34,7 @@ def clean_notes_text(raw: str | None) -> str:
     """Clean raw PoB NotesTab text while preserving paragraphs, URLs, and bullet lists."""
     if not raw or not isinstance(raw, str):
         return ""
-    normalized = raw.replace("\r\n", "\n").replace("\r", "\n")
+    normalized = _LINE_BREAKS_RE.sub("\n", raw)
     no_ansi = _CONTROL_CHAR_RE.sub("", _ANSI_CSI_RE.sub("", normalized))
     stripped = strip_pob_note_escapes(no_ansi)
     lines = [line.rstrip() for line in stripped.split("\n")]
