@@ -28,10 +28,10 @@ description: Path of Exile 1 (PoE1 3.30, 流放之路1) build diagnosis, headles
   pob research "<q1>" ["<q2>" ...] [--mods] [--filter "<kw>"] [--lang cn|us] # Concurrent poedb.tw + poewiki.net (1-3 short entity names)
   pob wiki "<q1>" ["<q2>" ...] | pob poedb "<q1>" ["<q2>" ...] [--mods] [--filter "<kw>"] [--lang cn|us]
   pob data gem "<q1>" ["<q2>" ...] | pob data gem --quality-breakpoints --active-only [--limit 25]
-  pob data unique [QUERY] [--mod "<stat_kw>"] [--slot S] | pob data mod "<q>" [--slot S] [--ilvl N] | pob data translate "<EN|中文>"
+  pob data unique [QUERY] [--mod "<stat_kw>"] [--slot S] | pob data drop "<item|boss|map>" | pob data mod "<q>" [--slot S] [--ilvl N] | pob data translate "<EN|中文>"
   pob data tree [Q...] [--type Keystone|Notable|Ascendancy|Bloodline] [--asc "<Asc>"] | pob data runegraft <query> | pob data tattoo <query> [--kind tattoo|runegraft]
   pob data tick <base_cd|coc|cospri|mjolner|poet|cwdt|soa> [--cdr N] [--aps R]        # Exact 0.033s tick & overspeed math
-  pob meta [--skill "<EN|中文>"] [--class "<EN|中文>"] [--league L]                   # Compliant poe.ninja league meta share (EN/ZH/slang)
+  pob price "<EN|中文>" [--league L] | pob meta [--skill "<EN|中文>"] [--class "<EN|中文>"] [--league L] # poe.ninja prices & league meta share
   ```
 - **D. Trade, Crafting Bench & `<3.5s` Timeless upgrades**:
   Run `pob diagnose @build.xml --no-rank` (or `pob timeless list`) for gaps & jewel socket IDs, then run `pob trade search`, `pob bench suggest`, or `pob timeless search` (hybrid in-engine PRNG+mmap synthesis for Legion & 3.30 Abyss jewels).

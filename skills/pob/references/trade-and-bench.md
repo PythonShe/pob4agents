@@ -8,6 +8,7 @@
 ## 1. Resolve Trade Stat IDs & Verify Slot Affix Existence (Official Trade = Ground Truth)
 ```powershell
 pob trade stats "法压" --slot boots
+pob trade stats "受到【坚定】影响时" --json   # Strips 【】 brackets, resolves Watcher's Eye/pseudo offline, exposes `better` (`1`/`-1`/`0`, `betterSource: "apt"`)
 pob trade stats "to Cold Resistance" --slot ring1
 
 # MANDATORY Ground-Truth check before claiming any affix can/cannot exist on a slot
