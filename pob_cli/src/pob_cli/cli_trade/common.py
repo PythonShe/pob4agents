@@ -55,6 +55,30 @@ def _err_utf8(text: str) -> None:
     click.echo(text, err=True)
 
 
+class TradeUsageGroup(click.Group):
+    """`pob trade`: Click usage errors exit 1, since trade's exit 2 means "no results"."""
+
+    def make_context(
+        self,
+        info_name: str | None,
+        args: list[str],
+        parent: click.Context | None = None,
+        **extra: Any,
+    ) -> click.Context:
+        try:
+            return super().make_context(info_name, args, parent=parent, **extra)
+        except click.UsageError as exc:
+            exc.exit_code = 1
+            raise
+
+    def invoke(self, ctx: click.Context) -> Any:
+        try:
+            return super().invoke(ctx)
+        except click.UsageError as exc:
+            exc.exit_code = 1
+            raise
+
+
 def _trade_error(ctx: click.Context, error: TradeError) -> None:
     _err_utf8(str(error))
     if isinstance(error, CookieRequired):
@@ -125,11 +149,15 @@ def _resolve_league(
             else:
                 with _ct.TradeClient(proxy=proxy, realm="tw") as tw_client:
                     resolved = tw_client.default_league()
+                    if tw_client.league_warning:
+                        _err_utf8(f"Warning: {tw_client.league_warning}")
             try:
                 atomic_write_json(_league_cache_path("tw"), {"_ts": time.time(), "league": resolved})
             except OSError:
                 pass
             return resolved
+        except (RateLimited, CookieRequired):
+            raise  # same contract as the global realm below: exit 4 / 3, never a silent fallback
         except TradeError:
             return cached_tw or "標準模式"
 
@@ -141,13 +169,15 @@ def _resolve_league(
             return league
     except Exception:
         pass
-    try:
-        if client is not None:
-            return client.default_league()
-        with _ct.TradeClient(proxy=proxy, realm="global") as fallback_client:
-            return fallback_client.default_league()
-    except TradeError:
-        return "Standard"
+    # RateLimited / CookieRequired propagate to `_trade_error` (exit 4 / 3); a failed lookup that
+    # still falls back to Standard leaves `league_warning` on the client for the caller to show.
+    if client is not None:
+        return client.default_league()
+    with _ct.TradeClient(proxy=proxy, realm="global") as fallback_client:
+        league = fallback_client.default_league()
+        if fallback_client.league_warning:
+            _err_utf8(f"Warning: {fallback_client.league_warning}")
+        return league
 
 
 def _daemon_call_safe(

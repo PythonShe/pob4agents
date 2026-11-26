@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..bridge_client import BridgeWorker
 from ..errors import DaemonRequestError
+from ..mutators.strict_args import opt_bool
 from ..snapshot import history_of
 from .read_cache import compute_source_hash, is_live_source
 from .rpc_mutate import norm_keep
@@ -13,6 +14,19 @@ from .runtime import normalize_slot_name
 
 if TYPE_CHECKING:
     from .slots import DaemonManager
+
+
+def same_slot_error(action: str, slot: str) -> str:
+    """Why a two-slot command refuses one slot named twice, in that command's own flags."""
+    if action == "tree_diff":
+        return (
+            f"`pob tree diff` compares two build slots, and both are '{slot}'. Pass a different "
+            "`--against`, or `--spec-a` / `--spec-b` to compare two tree specs of this one build."
+        )
+    return (
+        f"The reference slot must differ from the main slot (both are '{slot}'): loading the reference "
+        "would overwrite the main build and clear its undo history. Pass a different `--ref-target`."
+    )
 
 
 def dispatch_dual_slot_action(
@@ -58,7 +72,7 @@ def dispatch_dual_slot_action(
             rw,
             item_slots=params.get("item_slots"),
             skill_group=params.get("skill_group"),
-            apply=bool(params.get("apply", False)),
+            apply=opt_bool(params, "apply", default=False),
         )
         return manager._attach_state_meta(b_res, mw)
 

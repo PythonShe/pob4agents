@@ -87,6 +87,42 @@ _JEWEL_SLOTS_CACHE: dict[str, list[int]] = {}
 _BUILTIN_SUP_RE = re.compile(r"Supported by Level\s+(\d+)\s+(.+)", re.IGNORECASE)
 
 
+def resolve_import_tree_version(pob_root: Path | None, league: Any = None) -> str:
+    """The tree a profile import lands on: the engine's latest, `_ruthless` for Ruthless leagues.
+
+    Mirrors PoB's ImportTab (`latestTreeVersion .. ruthlessSuffix`); 3_30 when no engine dir is known.
+    """
+    version = "3_30"
+    if pob_root is not None:
+        from ..game_data import _find_latest_tree_lua
+
+        try:
+            version = _find_latest_tree_lua(Path(pob_root) / "PoE1")[0]
+        except OSError:
+            pass
+        if "ruthless" in str(league or "").lower():
+            ruthless = f"{version}_ruthless"
+            poe1 = Path(pob_root) / "PoE1"
+            if (poe1 / "TreeData" / ruthless / "tree.lua").is_file() or _stage_tree(poe1, ruthless):
+                version = ruthless
+    return version
+
+
+def _stage_tree(poe1: Path, tree_version: str) -> bool:
+    """Fetch a tree the slim engine left out (it ships the plain trees only); False when that cannot be done.
+
+    Staged here and not left to `import_code`, which fails the whole load when the download does:
+    an offline or blocked machine keeps importing the character on the plain tree.
+    """
+    try:
+        from ..bridge_trees import stage_tree_versions
+
+        stage_tree_versions([tree_version], poe1)
+    except Exception:
+        return False
+    return (poe1 / "TreeData" / tree_version / "tree.lua").is_file()
+
+
 def _load_jewel_slots(pob_root: Path | None, tree_version: str) -> list[int]:
     if pob_root is None:
         return list(_FALLBACK_JEWEL_SLOTS_3_30)
@@ -327,7 +363,7 @@ def _item_slot_name(item: dict[str, Any]) -> str | None:
 def character_bundle_to_pob_xml(
     bundle: dict[str, Any],
     *,
-    tree_version: str = "3_30",
+    tree_version: str | None = None,
     pob_root: Path | None = None,
 ) -> str:
     """Convert an English GGG character bundle (`char`, `items`, `passiveSkills`) into `<PathOfBuilding>` XML."""
@@ -338,6 +374,8 @@ def character_bundle_to_pob_xml(
         char_meta = {**items_payload["character"], **char_meta}
 
     class_id, asc_id, class_name, asc_name = _resolve_class_and_asc(char_meta, passives)
+    if not tree_version:
+        tree_version = resolve_import_tree_version(pob_root, char_meta.get("league"))
     level = int(char_meta.get("level") or 1)
     sec_asc_id = int(passives.get("alternate_ascendancy") or 0) if isinstance(passives.get("alternate_ascendancy"), int) else 0
 

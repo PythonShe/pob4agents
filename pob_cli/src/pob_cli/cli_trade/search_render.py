@@ -282,6 +282,8 @@ def _emit_search_results(
             payload["priceFloorNote"] = price_floor_note
         if update_warning:
             payload["updateWarning"] = update_warning
+        if fetched_ctx.get("league_warning"):
+            payload["leagueWarning"] = fetched_ctx["league_warning"]
         _emit_json(payload, compact=compact, out_path=out_path, sanitize=True)
         return
 
@@ -325,6 +327,8 @@ def _emit_search_results(
                 "override via POB_TW_DIVINE_CHAOS) since poe.ninja does not index pathofexile.tw."
             )
         body = f"{body.rstrip()}\n\n{tw_note}"
+    if fetched_ctx.get("league_warning"):
+        body = f"> Warning: {fetched_ctx['league_warning']}\n\n{body}"
     _emit_text(_prepend_warning(body, update_warning), out_path=out_path)
     if current_error:
         _err_utf8(f"Equipped item could not be read: {current_error}")

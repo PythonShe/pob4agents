@@ -21,6 +21,7 @@ from .runtime import (
     _daemon_boot_error_file,
     _daemon_state_file,
     _get_runtime_dir,
+    write_private_json,
 )
 from .slots import DaemonManager
 
@@ -108,7 +109,7 @@ def make_handler(manager: DaemonManager) -> type[BaseHTTPRequestHandler]:
                     400,
                     {
                         "ok": False,
-                        "error": redact_secrets(str(exc)),
+                        "error": _error_text(exc),
                         "type": type(exc).__name__,
                         "errorKind": "request",
                     },
@@ -117,7 +118,7 @@ def make_handler(manager: DaemonManager) -> type[BaseHTTPRequestHandler]:
                 # A healthy engine that refused bad input is a request error (exit 1); everything
                 # else, timeouts and crashes included, is a fault (exit 5). See ENGINE_ERROR_KINDS.
                 kind = exc.kind if isinstance(exc, BridgeRejectedError) else "daemon"
-                message = redact_secrets(str(exc))
+                message = _error_text(exc)
                 payload: dict[str, Any] = {
                     "ok": False,
                     "error": f"{message}\n{ENGINE_REJECTED_HINT}" if kind == "request" else message,
@@ -132,7 +133,7 @@ def make_handler(manager: DaemonManager) -> type[BaseHTTPRequestHandler]:
                     400,
                     {
                         "ok": False,
-                        "error": redact_secrets(str(exc)),
+                        "error": _error_text(exc),
                         "type": exc.__class__.__name__,
                         "errorKind": "daemon",
                         "trace": redact_secrets(traceback.format_exc(limit=4)),
@@ -140,6 +141,12 @@ def make_handler(manager: DaemonManager) -> type[BaseHTTPRequestHandler]:
                 )
 
     return RpcHandler
+
+
+def _error_text(exc: BaseException) -> str:
+    """The error line for the client, with any notes a failed rollback attached (`BaseException.add_note`)."""
+    notes = [str(n) for n in getattr(exc, "__notes__", ()) if str(n).strip()]
+    return redact_secrets("\n".join([str(exc), *notes]))
 
 
 def _serve_daemon(
@@ -160,7 +167,8 @@ def _serve_daemon(
     from .client import _guard_foreign_daemon_state
 
     rt_dir = _get_runtime_dir(runtime_dir)
-    rt_dir.mkdir(parents=True, exist_ok=True)
+    # A runtime dir the daemon creates is private (0700 on POSIX; the mode is ignored on Windows).
+    rt_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     boot_err_file = _daemon_boot_error_file(rt_dir)
     state_file = _daemon_state_file(rt_dir)
     existing_state = _daemon_pkg.read_daemon_state(rt_dir)
@@ -235,9 +243,7 @@ def _serve_daemon(
         "started_at": manager.started_at,
         "pob_dir": str(manager.pob_dir),
     }
-    tmp_state_file = state_file.with_suffix(f".{os.getpid()}.tmp")
-    tmp_state_file.write_text(json.dumps(state_payload, indent=2), encoding="utf-8")
-    os.replace(tmp_state_file, state_file)
+    write_private_json(state_file, state_payload)
 
     if announce_foreground:
         sys.stderr.write(

@@ -30,6 +30,8 @@ from .dewater_auto import (
 from .dewater_steps import _same_state
 from .eb_sustain import collect_dewatered_eb_flask_note, collect_mana_sustain_issues
 from .pitfalls_core import _detect_build_mechanics_and_pitfalls
+from .pitfalls_triggers import confirm_trigger_estimates
+from .static_checks import _has_hollow_palm_keystone, _resist_cap_and_gap
 from .summary import _has_doryanis_prototype_equipped
 from .threshold_probes import compute_threshold_probes
 
@@ -299,6 +301,7 @@ def _collect_static_health_issues(
     warnings: list[str],
     tree_summary: dict[str, Any] | None = None,
     equipped_slots_raw: list[dict[str, Any]] | None = None,
+    skill_flags: dict[str, Any] | None = None,
 ) -> list[dict[str, str]]:
     health_issues: list[dict[str, str]] = []
     has_doryani = _has_doryanis_prototype_equipped(items_res)
@@ -308,12 +311,13 @@ def _collect_static_health_issues(
             continue
         val = _finite_float(stats.get(f"{elem}Resist"))
         over = _finite_float(stats.get(f"{elem}ResistOverCap"))
-        if val < 75:
+        cap, gap = _resist_cap_and_gap(stats, elem, val)
+        if gap > 0:
             health_issues.append(
                 {
                     "category": "Resistance",
                     "severity": "HIGH",
-                    "message": f"{elem} Resist is uncapped: {val:.0f}% (gap: {75 - val:.0f}%)",
+                    "message": f"{elem} Resist is uncapped: {val:.0f}% of {cap:.0f}% max (gap: {gap:.0f}%)",
                 }
             )
         elif over < 15:
@@ -369,6 +373,7 @@ def _collect_static_health_issues(
             tree_summary=tree_summary,
             items_res=items_res,
             equipped_slots_raw=equipped_slots_raw,
+            skill_flags=skill_flags,
         )
     )
 
@@ -396,6 +401,11 @@ def _collect_static_health_issues(
         health_issues.append({"category": "EngineWarning", "severity": "HIGH", "message": w})
 
     primary_slots = {"Weapon 1", "Body Armour", "Helmet", "Gloves", "Boots", "Amulet", "Ring 1", "Ring 2", "Belt"}
+    hollow_slots = {"Weapon 1", "Gloves"}
+    worn = {s.get("name") for s in items_res.get("slots", []) if s.get("selItemId") and not s.get("inactive")}
+    if _has_hollow_palm_keystone(tree_summary) and not (hollow_slots & worn):
+        # Hollow Palm Technique wants both slots empty; with one filled it is off and the other is a real gap.
+        primary_slots -= hollow_slots
     for slot in items_res.get("slots", []):
         if slot.get("name") in primary_slots and not slot.get("inactive") and not slot.get("selItemId"):
             health_issues.append(
@@ -500,6 +510,7 @@ def audit_build(
             digest_before["warnings"],
             tree_summary=eff_tree,
             equipped_slots_raw=eff_raw,
+            skill_flags=digest_before.get("skillFlags"),
         )
 
         ak_reasons, flask_notes = (
@@ -561,6 +572,7 @@ def audit_build(
                     agent_probe_res = p_res
             except Exception:
                 pass
+            confirm_trigger_estimates(health_issues, agent_probe_res)
             if include_envelope:
                 try:
                     env_res = worker.call("eval_scenario_envelope", {})

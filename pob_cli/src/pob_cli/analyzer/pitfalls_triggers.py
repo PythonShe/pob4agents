@@ -37,15 +37,25 @@ def canonical_trigger_key(name: str) -> str:
     return s.replace("ö", "o")
 
 
-def _fmt_overspeed_gap(disp: str, loc: Any, aps: float, cdr: float, tick: dict[str, Any]) -> dict[str, str]:
+# Python-table trigger caps (base cooldowns, gem CDR, CwC intervals) are estimates until the Lua
+# agentProbes trigger cliffs confirm them: `pob diagnose` then reports the cliff itself
+# (`deduplicate_trigger_gaps` drops the estimate) and `pob audit` lifts it (`confirm_trigger_estimates`).
+ESTIMATE_SUFFIX = " [estimate, not engine-verified]"
+ESTIMATE_SEVERITY = "MEDIUM"
+
+
+def _fmt_overspeed_gap(
+    disp: str, loc: Any, aps: float, cdr: float, tick: dict[str, Any], *, estimate: bool = False
+) -> dict[str, str]:
     nb = tick.get("nextBreakpoint") or {}
     nh = f" or reach {nb['requiredCdrPct']}% CDR ({nb['targetTicks']}t={nb['effectiveCdMs']}ms, cap {nb['effectiveCapPerSec']:.2f}/s)" if nb else ""
     return {
-        "category": "TriggerOverspeed", "severity": "HIGH",
+        "category": "TriggerOverspeed", "severity": ESTIMATE_SEVERITY if estimate else "HIGH",
         "message": (
             f"Trigger Overspeed ({disp}, {loc}): Attack rate ({aps:.2f}/s) "
             f"exceeds trigger cap ({tick['effectiveCapPerSec']:.2f}/s at {cdr:g}% CDR, "
             f"{tick['ticks']}t = {tick['effectiveCdMs']}ms) — lower APS <= {tick['effectiveCapPerSec']:.2f}/s{nh}."
+            + (ESTIMATE_SUFFIX if estimate else "")
         ),
     }
 
@@ -114,6 +124,29 @@ def deduplicate_trigger_gaps(
         seen_trig_idx[tkey] = len(out)
         out.append(gap)
     return out
+
+
+def confirm_trigger_estimates(gaps: list[dict[str, str]], agent_probe: dict[str, Any] | None) -> None:
+    """Lift an overspeed estimate back to HIGH, in place, when an engine trigger cliff agrees with it.
+
+    `pob audit` reports the estimates beside the raw probe and does not replace them with
+    `TriggerCliff` gaps as `pob diagnose` does, so a confirmed one must not stay labelled a guess.
+    """
+    if not isinstance(agent_probe, dict):
+        return
+    exceeded = {
+        canonical_trigger_key(str(c.get("triggerName") or ""))
+        for c in agent_probe.get("triggerCliffs") or []
+        if isinstance(c, dict) and c.get("overspeedCliffExceeded")
+    } - NON_APS_TRIGGER_KEYS - {""}
+    for gap in gaps:
+        msg = str(gap.get("message") or "")
+        if gap.get("category") != "TriggerOverspeed" or not msg.endswith(ESTIMATE_SUFFIX):
+            continue
+        m_trig = _OVERSPEED_TRIG_RE.match(msg)
+        if m_trig and canonical_trigger_key(m_trig.group(1)) in exceeded:
+            gap["severity"] = "HIGH"
+            gap["message"] = msg[: -len(ESTIMATE_SUFFIX)]
 
 
 def _check_sword_of_ages_and_triggers(
@@ -202,12 +235,13 @@ def _check_sword_of_ages_and_triggers(
                         f"{nb['effectiveCdMs']}ms, cap {nb['effectiveCapPerSec']:.2f}/s)" if nb else ""
                     )
                     gaps.append({
-                        "category": "TriggerOverspeed", "severity": "HIGH",
+                        "category": "TriggerOverspeed", "severity": ESTIMATE_SEVERITY,
                         "message": (
                             f"Trigger Overspeed ({gnm}, Group #{g_idx}): Attack rate ({aps_for_group:.2f}/s) "
                             f"exceeds CoC trigger cap ({tick['effectiveCapPerSec']:.2f}/s at {total_cdr:g}% CDR, "
                             f"{tick['ticks']}t = {tick['effectiveCdMs']}ms) — attacks land inside cooldown and "
                             f"HALVE effective trigger rate! Either lower APS <= {tick['effectiveCapPerSec']:.2f}/s{nh}."
+                            + ESTIMATE_SUFFIX
                         ),
                     })
             elif "cast while channelling" in glow or gsid in ("SupportCastWhileChannelling", "SupportAwakenedCastWhileChannelling"):
@@ -219,7 +253,7 @@ def _check_sword_of_ages_and_triggers(
                     "note": (
                         f"`{gnm}` (Lv.{glvl}) uses a **fixed channelling trigger interval of {iv_ms}ms "
                         f"({iv_ms / 1000.0:.2f}s)**, NOT a Cooldown — `Cooldown Recovery Rate (CDR)` has "
-                        "**ZERO effect** on CwC trigger rate!"
+                        "**ZERO effect** on CwC trigger rate! (interval from a level table: estimate, not engine-verified)"
                     ),
                 })
             elif glow == "spellslinger" or gsid == "Spellslinger":
@@ -273,4 +307,4 @@ def _check_item_triggers(
                     "totalCdrPct": global_cdr_pct, "cooldown": tick,
                 })
                 if is_atk_trig and tick.get("overspeed") and aps_for_item is not None:
-                    gaps.append(_fmt_overspeed_gap(disp_name, sname, aps_for_item, global_cdr_pct, tick))
+                    gaps.append(_fmt_overspeed_gap(disp_name, sname, aps_for_item, global_cdr_pct, tick, estimate=True))

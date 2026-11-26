@@ -47,6 +47,19 @@ POBTOOLS_DATA_ONLY_PREFIXES: tuple[str, ...] = (
     "Data/translations_version.json",
 )
 _SAFE_TREE_VER_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+# A release asset name becomes a file and directory name under staging: one plain component only.
+_SAFE_ASSET_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+()\[\]-]{0,199}")
+# Windows opens these as devices whatever the extension (`NUL.zip` is `NUL`), so they cannot be staged.
+_WINDOWS_DEVICE_RE = re.compile(r"(?:CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9])(?:\..*)?", re.IGNORECASE)
+
+
+def _safe_asset_name(raw: Any) -> str:
+    """The manifest asset `name`, refused unless it is a single safe path component."""
+    name = str(raw or "")
+    # fullmatch: `$` would let a trailing newline through.
+    if Path(name).name != name or not _SAFE_ASSET_NAME_RE.fullmatch(name) or _WINDOWS_DEVICE_RE.fullmatch(name):
+        raise UpdateError(f"Refusing release asset with an unsafe name: {name[:80]!r}")
+    return name
 
 
 def _pkg() -> Any:
@@ -359,7 +372,7 @@ def _download_and_stage_release_zip(
     skip_prefixes: tuple[str, ...] = ("PoE1",),
     only_prefixes: tuple[str, ...] = (),
 ) -> dict[Path, Path]:
-    name = str(asset["name"])
+    name = _safe_asset_name(asset.get("name"))
     expected_sha256 = str(asset.get("sha256") or "").strip().lower()
     url = rewrite_github_url(f"{POBTOOLS_DOWNLOAD_BASE}/{tag}/{urllib.parse.quote(name)}", mirror=mirror)
 

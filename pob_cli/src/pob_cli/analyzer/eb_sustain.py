@@ -87,6 +87,72 @@ def _fmt_eb_pool_summary(es_val: float, es_for_mana: float, mana_unres: float, e
     return f"{es_val:.0f} ES + {mana_unres:.0f} Unreserved Mana = {tot:.0f}"
 
 
+_UNMODELLED_FLAGS = ("totem", "minion", "trap", "mine", "triggered")
+_TOTEM_TOKENS = ("totem", "ballista", "图腾", "圖騰")
+_MINION_ACTIVE_PREFIXES = ("summon ", "raise ", "animate ")
+_TRIGGER_SUPPORT_TOKENS = ("cast when", "cast on", "cast while", "trigger", "spellslinger", "arcanist brand", "automation")
+
+
+def _unmodelled_spend_reason(
+    stats: dict[str, Any],
+    skills_res: dict[str, Any] | None,
+    skill_flags: dict[str, Any] | None,
+) -> str | None:
+    """Why ManaCost x Speed does not describe the player's mana spend, or None when it may.
+
+    Totems, traps and mines cast on their own, minion DPS is not the summon's cast rate, and a
+    triggered skill's rate is not paid from the player's casting (often 0-cost or trigger-gated).
+    """
+    flags = skill_flags if isinstance(skill_flags, dict) else {}
+    for f in _UNMODELLED_FLAGS:
+        if flags.get(f):
+            return f
+    if _finite_float(stats.get("SkillTriggerRate")) > 0:
+        return "triggered"
+    groups = (skills_res or {}).get("groups") or []
+    main_idx = (skills_res or {}).get("mainSocketGroup")
+    main_group = next(
+        (g for g in groups if isinstance(g, dict) and (g.get("isMain") or (main_idx is not None and g.get("index") == main_idx))),
+        None,
+    )
+    gems = [gm for gm in (main_group or {}).get("gems") or [] if isinstance(gm, dict) and gm.get("enabled", True)]
+    for gm in gems:
+        if gm.get("support"):
+            blob = " ".join(_name_parts(gm))
+            if any(t in blob for t in _TOTEM_TOKENS):
+                return "totem"
+            if any(t in blob for t in _TRIGGER_SUPPORT_TOKENS):
+                return "triggered"
+    selected = _selected_active_parts(main_group or {}, gems)
+    if any(t in part for part in selected for t in _TOTEM_TOKENS):
+        return "totem"
+    if any(part.startswith(_MINION_ACTIVE_PREFIXES) for part in selected):
+        return "minion"
+    return None
+
+
+def _name_parts(entry: dict[str, Any]) -> list[str]:
+    parts = (strip_pob_escapes(str(entry.get(k) or "")).strip().lower() for k in ("name", "nameSpec", "nameZh", "skillId"))
+    return [part for part in parts if part]
+
+
+def _selected_active_parts(group: dict[str, Any], gems: list[dict[str, Any]]) -> list[str]:
+    """Names of the group's selected active skill; empty when the listing does not say which it is.
+
+    Another active gem in the same links (a Decoy Totem next to Fireball) says nothing about the
+    selected skill, so only that skill's own name may rule the estimate out.
+    """
+    skills = group.get("skills") or []
+    try:
+        idx = int(group.get("mainActiveSkill") or 1)
+    except (TypeError, ValueError):
+        idx = 1
+    if 1 <= idx <= len(skills) and isinstance(skills[idx - 1], dict):
+        return _name_parts(skills[idx - 1])
+    actives = [gm for gm in gems if not gm.get("support")]
+    return _name_parts(actives[0]) if len(actives) == 1 else []
+
+
 def collect_mana_sustain_issues(
     stats: dict[str, Any],
     skills_res_audit: dict[str, Any] | None,
@@ -94,6 +160,7 @@ def collect_mana_sustain_issues(
     tree_summary: dict[str, Any] | None = None,
     items_res: dict[str, Any] | None = None,
     equipped_slots_raw: list[dict[str, Any]] | None = None,
+    skill_flags: dict[str, Any] | None = None,
 ) -> list[dict[str, str]]:
     """Evaluate static Mana/ES cost & recovery issues with Eldritch Battery + `Replica Sorrow of the Divine` awareness."""
     issues: list[dict[str, str]] = []
@@ -196,6 +263,7 @@ def collect_mana_sustain_issues(
         and eff_casts > 0
         and exceeds_recovery
         and life_unres > 0
+        and _unmodelled_spend_reason(stats, skills_res_audit, skill_flags) is None
     ):
         detail_bits: list[str] = []
         if repeats > 1:
@@ -209,7 +277,8 @@ def collect_mana_sustain_issues(
                 "severity": "LOW",
                 "message": (
                     f"Mana spend rate ({spend_rate:.1f}/s = {mana_cost:.0f} * {eff_casts:.2f}/s{detail_suffix}) "
-                    f"exceeds net Mana recovery + leech ({rec_rate:.1f}/s)"
+                    f"exceeds net Mana recovery + leech ({rec_rate:.1f}/s) "
+                    "[estimate: ManaCost x cast rate, not engine-verified]"
                 ),
             }
         )

@@ -433,7 +433,15 @@ def _execute_trade_api_query(
             "client": client,
             "realm": eff_realm,
         }
-        league_name = _ct._resolve_league(league, **resolve_kw)
+        try:
+            league_name = _ct._resolve_league(league, **resolve_kw)
+        except TradeError as exc:
+            _trade_error(ctx, exc)
+            return None
+        league_warning = getattr(client, "league_warning", None)
+        league_warning = league_warning if isinstance(league_warning, str) and league_warning else None
+        if league_warning:
+            _err_utf8(f"Warning: {league_warning}")
         try:
             entries, stats_source = _ct.load_trade_stats(remote_fetcher=None if dump_query else client.stats)
         except TradeError as exc:
@@ -513,6 +521,7 @@ def _execute_trade_api_query(
             payload = {
                 "realm": eff_realm,
                 "league": league_name,
+                "leagueWarning": league_warning,
                 "slot": slot,
                 "category": resolved_category,
                 "statsSource": stats_source,
@@ -548,6 +557,7 @@ def _execute_trade_api_query(
     return {
         "realm": eff_realm,
         "league_name": league_name,
+        "league_warning": league_warning,
         "stats_source": stats_source,
         "plan": plan,
         "open_flags": open_flags,

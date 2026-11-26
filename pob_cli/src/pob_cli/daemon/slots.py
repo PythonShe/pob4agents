@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 from ..bridge_client import BridgeWorker
 from ..errors import DaemonRequestError
 from ..locale_cfg import get_active_lang
-from ..snapshot import SlotHistory, history_of
+from ..snapshot import SlotHistory, history_of, rebuild_if_stale
 from ..updater import (
     OK_STATES,
     STATE_BOOTSTRAP_MISSING,
@@ -25,6 +25,7 @@ from ..updater import (
     unrestored_swap,
 )
 from .read_cache import READ_CACHE_ACTIONS, SlotReadCache
+from .rpc_dual import same_slot_error
 from .rpc_handlers import dispatch_dual_slot_action, dispatch_game_data, dispatch_slot_action
 from .runtime import (
     GAME_ID,
@@ -80,6 +81,16 @@ _STATE_META_ACTIONS = frozenset(
         "matrix",
     }
 )
+
+
+_REF_LOAD_KEYS = ("ref_source", "ref_xml_code", "compare_source", "compare_xml_code")
+
+
+def _loads_build(action: str, params: dict[str, Any]) -> bool:
+    """Whether the call re-imports the slot's build, so a failed rebuild of the stale one must not block it."""
+    return action in ("load", "new_build", "undo", "redo") or any(
+        params.get(k) for k in ("source", "xml_code", "char_name")
+    )
 
 
 class DaemonManager:
@@ -473,6 +484,8 @@ class DaemonManager:
             main_slot = normalize_slot_name(params.get("main_target") or params.get("target") or "main")
             default_ref = "ref" if main_slot == "main" else f"{main_slot}_ref"
             ref_slot = normalize_slot_name(params.get("ref_target") or default_ref)
+            if ref_slot == main_slot:
+                raise DaemonRequestError(same_slot_error(action, main_slot))
             with self._reader_barrier():
                 locks = [self._get_slot_lock(s) for s in sorted({main_slot, ref_slot})]
                 with contextlib.ExitStack() as stack:
@@ -480,9 +493,10 @@ class DaemonManager:
                         stack.enter_context(lk)
                     mw = self._get_worker_in_barrier(main_slot)
                     rw = self._get_worker_in_barrier(ref_slot)
-                    if action == "compare" and not any(
-                        params.get(k) for k in ("source", "xml_code", "ref_source", "ref_xml_code")
-                    ):
+                    loads = any(params.get(k) for k in ("source", "xml_code", "ref_source", "ref_xml_code"))
+                    rebuild_if_stale(mw, required=not _loads_build(action, params))
+                    rebuild_if_stale(rw, required=not any(params.get(k) for k in _REF_LOAD_KEYS))
+                    if action == "compare" and not loads:
                         eff_lang, _ = get_active_lang(self.runtime_dir)
                         return self._read_cache.run_cached_compare(
                             main_slot,
@@ -526,6 +540,7 @@ class DaemonManager:
                 if cached_hit is not None:
                     return cached_hit
 
+                rebuild_if_stale(worker, required=not _loads_build(action, params))
                 try:
                     res_slot = self._dispatch_slot(action, params, worker)
                 except DaemonRequestError as exc:

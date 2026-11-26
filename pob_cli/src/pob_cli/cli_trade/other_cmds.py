@@ -14,7 +14,7 @@ from ..locale_cfg import current_realm, trade_base_url_for_realm
 from ..trade_client import TradeError
 from ..trade_item import convert_item_text
 from ..trade_query import get_stat_polarity_info, resolve_stat, suggest_stats
-from .common import SLOT_HINT, _echo_utf8, _err_utf8, _trade_error
+from .common import SLOT_HINT, TradeUsageGroup, _echo_utf8, _err_utf8, _trade_error
 
 
 def _polarity_json(stat_id: str) -> dict[str, object]:
@@ -35,7 +35,7 @@ def _fmt_polarity_md(stat_id: str) -> str:
     return f"↑{tag}"
 
 
-@click.group("trade")
+@click.group("trade", cls=TradeUsageGroup)
 def trade_group() -> None:
     """Search official PoE1 trade (read-only), preview Harvest swaps, and verify in PoB."""
 

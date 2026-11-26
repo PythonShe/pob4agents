@@ -13,25 +13,33 @@ description: Path of Exile 1 (PoE1 3.30, 流放之路1) build diagnosis, headles
    - Main CLI Markdown outputs (`diagnose`, `load`, `items`, `skills`, `rank-gems`, `compare`, mutation reports) render gems, uniques, bases, and ascendancies as `<Localized> (<English>)` according to `pob lang` (e.g., `zh-TW`: `啟蒙輔助 (Enlighten Support)`, `象牙塔 (The Ivory Tower)`, `遺守使徒 (Reliquarian)`; `zh-CN`: `启蒙(辅) (Enlighten Support)`, `象牙之塔 (The Ivory Tower)`; `en`: pure English). Always preserve exact `<Localized> (<English>)` names from `pob` output instead of freelancing or inventing translations; `--json` retains raw English machine keys.
    - **NEVER auto-switch trade realm to `tw` when switching to Traditional Chinese (`pob lang zh-TW`)** — many Traditional Chinese players play on International (`pathofexile.com`). Whenever switching to `zh-TW` while `realm != "tw"`, explicitly ask the player **"你玩的是台服吗？"** (confirm whether they play on `pathofexile.tw`); only run `pob lang --realm tw` or pass `--realm tw` to `pob trade` after explicit user confirmation.
 
+## 0. Core Workflow (load -> what-if -> apply -> verify -> hand back)
+1. **Load & baseline**: `pob diagnose '@build.xml' -q "<question>"` (or a pobb.in / profile URL; `pob new ...` for a cold start). Ranking is off by default (fast).
+2. **What-if, nothing persisted**: `pob batch --json-ops '[...]'`, `pob sweep`, `pob item try --slot S --raw "<txt>"`, `pob skill set ...`, `pob tree change ...` without `--apply` (0-residue rollback).
+3. **Persist the winner**: rerun the chosen change with `--apply` (`pob undo` / `pob redo` if needed).
+4. **Verify**: `pob summary` / `pob audit` and read the new `[Env: ... (rev=N)]` numbers.
+5. **Hand the build back**: `pob export-code` (PoB import code to paste into Path of Building) or `pob save out.xml`.
+
 ## 1. Canonical Fast Recipes
 - **A. Initial build diagnosis, cold-start skeleton & official profile import**:
   ```powershell
-  pob diagnose @build.xml -q "<player question>" [--keep SPEC]... [--top 5] [--json]
-  pob new --class Witch --asc Necromancer --level 90; pob batch --json-ops '[...]' --apply # Cold-start theorycraft from scratch (sequential)
+  pob diagnose '@build.xml' -q "<player question>" [--keep SPEC]... [--rank | --top N] [--json]   # --rank / --top N enable ROI ranking (slow); off by default
+  # Cold start, run sequentially (node ids/names: pob tree --search "<kw>" --show-path):
+  pob new --class Witch --asc Elementalist --level 90; pob batch --json-ops '[{"op":"add_group","label":"Main","gems":["Arc:20:20","Spell Echo:20:0","Lightning Penetration:20:0","Controlled Destruction:20:0"],"makeMain":true},{"op":"tree","allocate":["Elemental Equilibrium"]},{"op":"config","set":{"enemyIsBoss":"Pinnacle"}}]' --apply
   pob profile "https://www.pathofexile.com/account/view-profile/<Acc-1234>" [--realm pc|cn] [--league L] # 0-engine char list (public intl needs no cookie; CN uses env POE_CN_SESSID)
   pob diagnose "https://www.pathofexile.com/account/view-profile/<Acc-1234>" --char "<name>" -q "<question>"
   ```
 - **B. Dual-build A/B comparison & multi-stage pobb.in**:
   ```powershell
-  pob load <url|@build.xml> [--stage "<idx|title>"] [--spec S] [--item-set I] [--skill-set K] # Also supports #stage=<idx|title> URL/file fragment
-  pob diagnose @buildA.xml --compare @buildB.xml [--stage S] [--ref-stage R] -q "<player question>"
+  pob load <url|'@build.xml'> [--stage "<idx|title>"] [--spec S] [--item-set I] [--skill-set K] # Also supports #stage=<idx|title> URL/file fragment
+  pob diagnose '@buildA.xml' --compare '@buildB.xml' [--stage S] [--ref-stage R] -q "<player question>"
   pob tree diff [--against ref | --spec-a 1 --spec-b 2] # 5-section structural tree diff (intra-build --spec-a/--spec-b reflects active ItemSet)
   ```
 - **C. Mechanics, local 0ms game data, `0.033s` CDR math & dual-source web research (daemon-free)**:
   ```powershell
   pob ground "<player question>"                                      # <15ms: 3.30 cards + PoE2/patch traps
-  pob research "<q1>" ["<q2>" ...] [--mods] [--filter "<kw>"] [--lang cn|us] # Concurrent poedb.tw + poewiki.net (1-3 short entity names)
-  pob wiki "<q1>" ["<q2>" ...] | pob poedb "<q1>" ["<q2>" ...] [--mods] [--filter "<kw>"] [--lang cn|us]
+  pob research "<q1>" ["<q2>" ...] [--mods] [--filter "<kw>"] [--lang cn|us|en] # Concurrent poedb.tw + poewiki.net (1-3 short entity names)
+  pob wiki "<q1>" ["<q2>" ...] | pob poedb "<q1>" ["<q2>" ...] [--mods] [--filter "<kw>"] [--lang cn|us|en]
   pob data gem "<q1>" ["<q2>" ...] | pob data gem --quality-breakpoints --active-only [--limit 25]
   pob data unique [QUERY] [--mod "<stat_kw>"] [--slot S] | pob data drop "<item|boss|map>" | pob data mod "<q>" [--slot S] [--ilvl N] | pob data translate "<EN|中文>"
   pob data tree [Q...] [--type Keystone|Notable|Ascendancy|Bloodline] [--asc "<Asc>"] | pob data runegraft <query> | pob data tattoo <query> [--kind tattoo|runegraft]
@@ -39,7 +47,7 @@ description: Path of Exile 1 (PoE1 3.30, 流放之路1) build diagnosis, headles
   pob price "<EN|中文>" [--league L] | pob meta [--skill "<EN|中文>"] [--class "<EN|中文>"] [--league L] # poe.ninja prices & league meta share
   ```
 - **D. Trade (Global & TW `pathofexile.tw`), Crafting Bench & `<3.5s` Timeless upgrades**:
-  Run `pob diagnose @build.xml --no-rank` (or `pob timeless list`) for gaps & jewel socket IDs, then run `pob trade search` (add `--realm tw` only after user confirms TW server; supports `--name`, `--type`, `--corrupted yes|no|any`, auto TW name mapping & reverse-ZH PoB eval; TW chaos-equivalent uses static fallback `1d=150c` unless `POB_TW_DIVINE_CHAOS` env override is set since poe.ninja does not index `pathofexile.tw`), `pob trade leagues [--realm tw]`, `pob bench suggest`, or `pob timeless search` (hybrid in-engine PRNG+mmap synthesis for Legion & 3.30 Abyss jewels).
+  Run `pob diagnose '@build.xml'` (ranking is off by default; or `pob timeless list`) for gaps & jewel socket IDs, then run `pob trade search` (add `--realm tw` only after user confirms TW server; supports `--name`, `--type`, `--corrupted yes|no|any`, auto TW name mapping & reverse-ZH PoB eval; TW chaos-equivalent uses static fallback `1d=150c` unless `POB_TW_DIVINE_CHAOS` env override is set since poe.ninja does not index `pathofexile.tw`), `pob trade leagues [--realm tw]`, `pob bench suggest`, or `pob timeless search` (hybrid in-engine PRNG+mmap synthesis for Legion & 3.30 Abyss jewels).
 
 ## 2. Fast `<0.3s` Follow-Ups & CoW Zero-Residue What-If (`--apply` to Persist)
 ```powershell
@@ -47,20 +55,21 @@ pob help --brief | pob summary [--json] | pob audit [--keep SPEC] | pob calc "<k
 pob items [--slot "Ring 1"|"#1"] [--all --raw] | pob skills [--group main] | pob tree [--search "<kw>"|--socket-radius <id>] | pob config list [--all]
 pob tree prune [--sort dps|ehp|pts] [--max-branch-pts 5] [--include-unsafe] | pob tree rank-wheels [--sort dps|ehp] [--max-dist 12] [--max-pts 10] [--all-tags] [--no-proxy-sockets] # Macro respec (prune + rank-wheels + sweep): per-pt ΔDPS%/pt & ΔEHP%/pt, <nid>:<eid> masteries; never confuse isolated [Proxy Benchmark] sockets with real gear
 pob item inspect (--slot S | --raw "<txt>" | --file f) [--want "<stat>"]... | pob item try --slot S --raw "<txt>" [--apply] | pob item edit --slot S --add-mod "<ln>" [--apply] | pob item anoint --notable "<N>"
-pob skill add|set|rm --group main ... [--apply] | pob tree change --allocate <id>[,<id>...] [--deallocate <id>[,<id>...]] [--apply] | pob config set <k>=<v> [--custom-mods "<txt>"] [--apply]
-pob batch --json-ops '[...]' [--return "skills,summary"] | pob sweep --scenario Pinnacle --json-variants '[...]' | pob matrix Original Pinnacle Uber FlasksOff
+pob skill add|set|rm --group main ... [--target SLUG] [--apply] | pob tree change --allocate <id>[,<id>...] [--deallocate <id>[,<id>...]] [--apply] | pob config set <k>=<v> [--custom-mods "<txt>"] [--apply]
+pob batch --json-ops '[...]' [--return "skills,summary"] (ops: references/whatif-and-batch.md) | pob sweep --scenario Pinnacle --json-variants '[...]' | pob matrix Original Pinnacle Uber FlasksOff
 pob rank-nodes [--stat CombinedDPS|TotalEHP|Life] [--max-dist 5] | pob rank-gems [--group main] [--slot N|--add-link]
 pob bench suggest --slot boots --stat "抗性" | pob trade search --slot ring1 [--realm global|tw] [--name "<Unique>"] [--corrupted yes|no|any] [--securable] [--auto-query | --stat "生命>=60" --sum "火抗|冰抗|电抗>=80"] [--bench-craft "最大生命"] [--max-per-seller 2] [--normalize-quality auto|on|off] --budget 5 --currency divine
 pob timeless search --jewel "Lethal Pride" --socket <nodeId|id1,id2|all> --stat CombinedDPS | pob lang [zh-CN|zh-TW|en] [--realm global|tw]
-pob map-regex [@build.xml] [--tier both|t16|t17] [--mode safe|brick] [--avoid "<id|kw>"] [--allow "<id|kw>"] [--min-quant 80] [--client-lang auto|zh-CN|zh-TW|en] # <=250-char 0-FP stash regex
+pob map-regex ['@build.xml'] [--tier both|t16|t17] [--mode safe|brick] [--avoid "<id|kw>"] [--allow "<id|kw>"] [--min-quant 80] [--client-lang auto|zh-CN|zh-TW|en] # <=250-char 0-FP stash regex
 ```
+`--target SLUG` picks a build slot (`main`, `ref`); `--slot` is an equipment/socket slot only on `items`/`item`/`trade`/`bench`/`data`/`rank-gems`/`skill new-group` (elsewhere `--slot gloves` is refused with exit 1).
 
 ## 3. High-Risk PoE1 3.23–3.30 Domain Facts
 - **3.28 Awakened -> Exceptional Gems**: Regular **Awakened Support Gems** (`Awakened Elemental Focus`, `Awakened Spell Echo`, `Awakened CwC`, `Awakened CoC`) were **drop-disabled in 3.28 (Mirage)** and replaced by **Exceptional Support Gems** (max natural **Lv3**, corrupted **Lv4** — `Greater Spell Echo`, `Cooldown Recovery`, `Eldritch Blasphemy`, `Hexpass`, `Congregation`). Only `Awakened Empower`, `Awakened Enhance`, `Awakened Enlighten` remain as Exceptional gems (max natural **Lv4**, corrupted **Lv5**).
 - **3.25–3.30 Removals & Reworks**: Removed `Divine Blessing` (`神圣祝福`), `Ancestral Protector`/`Warchief` (`先祖卫士`/`战士长`), Lab Enchants, Alt-Quality (`Anomalous`/`Divergent`/`Phantasmal`), Sextants, Left-Click instant skills (use `Automation`/`Autoexertion`); `Vortex` = `0.6s` cast; `Hatred` (`憎恨`) = Phys-as-Cold only (no `% more Cold`); `Endurance Charge` (`耐力球`) = **4% Phys & Ele DR** (no `+4% Ele Res`); `Taste of Hate` (`恨意`) = Fire/Light-as-Cold; Hierophant `Sanctuary of Thought` = no 50% less Mana Cost; `Cloak of Defiance` = standard 40% MoM; Trickster `Polymath` = **2% more** per Mastery; Ranger `Warden` (`守望者`) replaced Raider.
 - **`Volatile Vaal Orb`（易变瓦尔宝珠 / 易變瓦爾寶珠）& 3.30 `Reliquarian` Synergy**: Unique items only. **50% chance to destroy the item** (the in-game preview shows the new values in orange before confirming; surviving items never brick to Rare); if it survives, the unique becomes **`Corrupted`** and **each rollable modifier value is independently scaled to `0.78x–1.22x` in `0.01` steps** (values `1` and `2` cannot change due to rounding; breaks past the normal `1.0x` Divine roll ceiling, and scales downsides too!). Strong double-dip synergy with 3.30 **`Reliquarian` (`守藏者`/`遺守使徒`) `Shadowstitch`** corrupted-item scaling. For high-leverage uncorrupted core uniques (`The Ivory Tower` / `象牙塔`, `Ephemeral Edge` / `影殞`, `Mageblood` / `魔血`, `Aegis Aurora`, `Crown of the Inward Eye`, `Rathpith Globe`, `Astramentis`, `Shavronne's Wrappings`), simulate the `1.15x–1.22x` roll ceiling + `Corrupted` tag via `pob item edit` / `pob batch` (NEVER multiply fixed denominators like `per 100 Reserved Life`!) and search live corrupted supply via `pob trade search --name "<unique>" --corrupted yes` (with `--realm tw` for confirmed TW players).
 - **Triggers & Ticks**: PoE1 server tick = **`0.033s` (`33ms`, NOT `33.33ms`)** (`pob data tick`); CoC overspeed (`APS > cap`) **halves** effective triggers; **`Cast while Channelling` (`CwC`) is a fixed interval (`320ms` Lv20), NOT a cooldown — CDR has 0% effect**.
-- **Build Bricks & Archetype Traps**: `Esh's Visage` (`艾许之面`) **breaks on Low Life (`<=50%` unres Life)** so Chaos bypasses ES (use `Shavronne's Wrappings`/`Solaris Lorica`/`The Ivory Tower`/`Coruscating Elixir`); `+% to Quality of all Skill Gems` applies **only to Active Skill Gems**; **Tinctures != Flasks**; `EB + CI` = 1 Life / 0 ES on Life; `The Agnostic + Valyrium + Bloodnotch/CWS` requires **`ES = 0`** (>0 ES adds 50% Stun Avoidance & raises Valyrium stun threshold — keep `The Agnostic` and `Defiance of Destiny` on CWS); Chieftain `Ramako, Sun's Light` locks stationary enemy Fire Res vs DoT to **fixed `-20%`** (`Flammability`/Exposure/Scorch add 0 while stationary — use `Punishment`); `Inspiration` gives 0 charges at 0 Mana and resets at **800 Mana spent** Lv20 (`922` Lv21); `Sadism` reduces Ailment Duration (pads PoB DPS while cutting ignite uptime); `Doryani's Prototype` `-200%` Lightning Res is intentional (Armour mitigates hits, not Lightning DoT); `Uul-Netol's Vow` adds a 7th link; `Returning Projectiles` requires `Pierce`.
+- **Build Bricks & Archetype Traps** (`Esh's Visage` on Low Life, `EB + CI`, CWS `The Agnostic`/`ES = 0`, `Ramako`, `Inspiration` 800-Mana reset, `Sadism` 70% less Ailment Duration, `Doryani's Prototype`, `Uul-Netol's Vow`, `Returning Projectiles`, gem-quality scope, Tinctures != Flasks): read `references/triggers-and-mechanics.md` §3-4 and `references/poe1-330-anti-hallucination.md` §4 before judging any of them.
 - **Vestigial (`残存`/`殘存`) uniques, Wickerman Viscera (`内脏`/`臟器`) & Runegrafts (`符文之结`/`符文之結`)**:
   - A `{vestigial}` implicit on a unique `Helmet / Body Armour / Gloves / Boots / Shield` is legal: it is another unique's mod, and PoB places it only on a unique of the donor's own item type that has no `Source:` line (plus `Stasis Prison`), e.g. `+200 to maximum Life` from `Kaom's Heart` on `Cloak of Flame`; never on a quiver, a Replica or the donor itself. `pob data mod "<stat>"` shows `unique <type>, from <donor>`, and `pob data unique "<name>"` says whether the item takes one; check before calling one illegal.
   - PoB 2.69 has the **Wickerman Viscera** as items (the Wickerman slots in `pob items`) and the **Runegrafts** as passives (`pob data runegraft <query>`), and counts what it can parse of them itself: e.g. the `bonuses gained from Equipped Gloves/Boots` of `Greater Scholar's Leg` or `Runegraft of the Bound`. A `customMods` line that repeats such a stat counts twice (`pob diagnose` points such lines out): keep only what the build does not already carry. Keep **`Convocation` (`号召`) manual** when it alone feeds `"used a Minion Skill Recently"` (e.g. `Greater Overseer's Whip`; a triggered skill is not "used").
