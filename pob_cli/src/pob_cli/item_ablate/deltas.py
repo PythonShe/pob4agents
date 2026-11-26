@@ -77,6 +77,9 @@ _UTILITY_GUARD_KEYWORDS = (
     "curse",
     "cooldown",
     "area of effect",
+    # Only the main skill's output is compared: a line for another skill of the build reads as dead.
+    "minion",
+    "socketed",
 )
 _UTILITY_STAT_SPECS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("lifeRegen", ("NetLifeRegen", "LifeRegenRecovery", "LifeRegen")),
@@ -175,13 +178,23 @@ def _line_switched_off(edit_state: Any, line_idx: int) -> bool:
     return entry is None or bool(entry.get("disabled"))
 
 
-def _main_group_label(header: Any) -> Any:
+def _main_group(header: Any) -> tuple[int, Any, list[Any]]:
     group = header.get("mainSocketGroup") if isinstance(header, dict) else None
-    if not isinstance(group, dict):
-        return None
-    entries = group.get("list") or []
-    idx = int(group.get("index") or 1)
-    return entries[idx - 1] if 0 < idx <= len(entries) else None
+    # Labels only: an entry also carries its position, which says nothing about which skill it is.
+    entries = [e.get("label") if isinstance(e, dict) else e for e in (group.get("list") or [])] if isinstance(group, dict) else []
+    idx = int(group.get("index") or 1) if isinstance(group, dict) else 1
+    return idx, (entries[idx - 1] if 0 < idx <= len(entries) else None), entries[: max(idx - 1, 0)]
+
+
+def _main_skill_moved(base_header: Any, cand_header: Any) -> bool:
+    """Whether the main socket group is another skill now than in the baseline.
+
+    PoB keeps the index when a group before it goes, so the entry at that index is compared, and
+    the groups ahead of it as well: the next group can carry the very same label.
+    """
+    b_idx, b_entry, b_ahead = _main_group(base_header)
+    c_idx, c_entry, c_ahead = _main_group(cand_header)
+    return b_entry != c_entry or (b_idx == c_idx and b_ahead != c_ahead)
 
 
 def _stat_changed(before: Any, after: Any) -> bool:
@@ -346,6 +359,7 @@ def _eval_single_mod_delta(
     cand_digest: dict[str, Any],
     unmeasured: str | None = None,
     cluster_jewel: bool = False,
+    main_pass_changed: list[str] | None = None,
 ) -> dict[str, Any]:
     b_stats = base_digest.get("stats") or {}
     c_stats = cand_digest.get("stats") or {}
@@ -419,7 +433,7 @@ def _eval_single_mod_delta(
         unmeasured = "clusterLayoutChanges"
     # A line is dead only when nothing PoB calculates moved: reservation, ailment avoidance,
     # recovery or a max hit count as much as the headline columns do.
-    changed = _changed_stats(b_stats, c_stats)
+    changed = sorted({*_changed_stats(b_stats, c_stats), *(main_pass_changed or ())})
     warnings_changed = set(base_digest.get("warnings") or []) != set(cand_digest.get("warnings") or [])
     unsupported = str(entry.get("text") or "").lower().startswith(_UNSUPPORTED_COLOUR)
     is_dead = not changed and not warnings_changed and not bricks and not unsupported and not unmeasured
@@ -467,6 +481,7 @@ def _eval_single_mod_delta(
             ):  # fmt: skip
                 out[key] = None
             out.update(deltaResists={}, deltaResistOverCaps={}, deltaAttributes={}, otherChangedStats=[])
+            out["changedStatCount"] = None
             out["bricksRequirements"] = False
             for key in ("brickedReasons", "ehpTransition", "deltaUtility", "deltaMaxHits"):
                 out.pop(key, None)

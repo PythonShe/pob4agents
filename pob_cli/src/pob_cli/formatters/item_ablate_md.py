@@ -208,8 +208,8 @@ def format_item_ablation_markdown(ablation: dict[str, Any]) -> str:
         lines.append("- **Crafting Notes**: " + "; ".join(summary_bits) + ".")
     if dead_cnt > 0 or any(d.get("isDeadMod") for d in deltas):
         lines.append(
-            "_Note: [DEAD-MOD] means no stat PoB calculates changed under the current Config; "
-            "check conditional, on-kill and other utility PoB does not model before annulling._"
+            "_Note: [DEAD-MOD] means no stat PoB calculates for the main skill changed under the current Config; "
+            "a line for another skill of the build, or utility PoB does not model, can still matter before annulling._"
         )
     if any(d.get("unmeasuredReason") for d in deltas):
         lines.append(

@@ -215,8 +215,8 @@ def test_ablate_unit_deltas_categories_dead_mod_load_bearing_and_zero_residue() 
     assert "safe candidate" not in md
     assert "Single-Mod Ablation" in md
     assert (
-        "Note: [DEAD-MOD] means no stat PoB calculates changed under the current Config; "
-        "check conditional, on-kill and other utility PoB does not model before annulling."
+        "Note: [DEAD-MOD] means no stat PoB calculates for the main skill changed under the current Config; "
+        "a line for another skill of the build, or utility PoB does not model, can still matter before annulling."
     ) in md
 
 
@@ -280,8 +280,8 @@ def test_ablate_never_suggests_annul_reforge_on_non_craftable_or_non_explicit(
     assert "annul/reforge" not in md
     assert "safe candidate" not in md
     assert (
-        "Note: [DEAD-MOD] means no stat PoB calculates changed under the current Config; "
-        "check conditional, on-kill and other utility PoB does not model before annulling."
+        "Note: [DEAD-MOD] means no stat PoB calculates for the main skill changed under the current Config; "
+        "a line for another skill of the build, or utility PoB does not model, can still matter before annulling."
     ) in md
 
 
@@ -887,35 +887,130 @@ def test_ablate_unmeasured_rules_follow_pob_wording(text: str, cluster: bool, re
     json.dumps(res, allow_nan=False)
 
 
+def _group(label: str, val: int) -> dict[str, Any]:
+    return {"label": label, "labelZh": label, "val": val}
+
+
 @pytest.mark.parametrize(
-    "text",
+    ("after_main", "moved"),
     [
-        "Grants Level 22 Wrath Skill",
-        # PoB's unique data mostly has no trailing "Skill", and triggers are worded differently again.
-        "Grants Level 20 Aspect of the Spider",
-        "Trigger Level 10 Summon Spectral Wolf on Kill",
+        # The granted skill's group sits ahead of the main one, which PoB then reads from the next group.
+        (["Arc"], True),
+        # The next group carries the same label: only the groups ahead of the main one give the move away.
+        (["Fireball"], True),
     ],
 )
-def test_ablate_granted_skill_that_moves_the_main_skill_has_no_numbers(text: str) -> None:
+def test_ablate_granted_skill_that_moves_the_main_skill_has_no_numbers(after_main: list[str], moved: bool) -> None:
     def _dps(st: dict[str, Any], on: bool) -> None:
         st["CombinedDPS"] = st["FullDPS"] = 100_000.0 if on else 40_000.0
         st["AreaOfEffectMod"] = 1.0 if on else 1.4
+        st["Str"] = 160.0 if on else 100.0
 
-    worker = _one_line_worker({"section": "explicit", "text": text}, stats_fn=_dps)
+    worker = _one_line_worker({"section": "explicit", "text": "Grants Level 20 Aspect of the Spider"}, stats_fn=_dps)
     orig_call = worker.call
 
     def _header(method: str, params: dict[str, Any] | None = None, **kw: Any) -> dict[str, Any]:
         if method == "get_build_header":
             granted = not any(ml.get("disabled") for ml in worker.mod_lines)
-            groups = ["Granted", "Fireball", "Arc"] if granted else ["Fireball", "Arc"]
-            return {"mainSocketGroup": {"index": 2, "list": groups}}
+            labels = (["Granted"] if granted else []) + ["Fireball", *after_main]
+            return {"mainSocketGroup": {"index": 2, "list": [_group(lb, i) for i, lb in enumerate(labels, 1)]}}
         return orig_call(method, params, **kw)
 
     worker.call = _header  # type: ignore[method-assign]
     res = ablate_item_mods(worker, "Ring 1")  # type: ignore[arg-type]
     d = res["ablation_deltas"][0]
-    assert d["unmeasuredReason"] == "mainSkillShifted"
+    assert (d["unmeasuredReason"] == "mainSkillShifted") is moved
     assert d["deltaDps"] is None and d["deltaDpsPct"] is None
-    assert d["otherChangedStats"] == []
+    assert d["otherChangedStats"] == [] and d["changedStatCount"] is None
+    # The attribute drop belongs to the other skill's build as well: no requirement verdict is drawn from it.
+    assert d["bricksRequirements"] is False and "brickedReasons" not in d
     assert d["isDeadMod"] is False
     assert "AreaOfEffectMod" not in format_item_ablation_markdown(res)
+
+
+def test_ablate_main_skill_is_not_moved_by_a_group_behind_it() -> None:
+    from pob_cli.item_ablate.deltas import _main_skill_moved
+
+    def _hdr(index: int, *labels: str) -> dict[str, Any]:
+        return {"mainSocketGroup": {"index": index, "list": [_group(lb, i) for i, lb in enumerate(labels, 1)]}}
+
+    assert _main_skill_moved(_hdr(1, "Fireball", "Granted"), _hdr(1, "Fireball")) is False
+    assert _main_skill_moved(_hdr(2, "Granted", "Fireball"), _hdr(2, "Fireball")) is True
+    # An engine that moved the index along with the group still points at the same skill.
+    assert _main_skill_moved(_hdr(2, "Granted", "Fireball"), _hdr(1, "Fireball")) is False
+    assert _main_skill_moved({}, {}) is False
+
+
+def test_ablate_stat_comparison_handles_infinite_and_missing_values() -> None:
+    from pob_cli.item_ablate.deltas import _changed_stats, _stat_changed
+
+    nan = float("nan")
+    assert _stat_changed(nan, nan) is False and _stat_changed(nan, 1.0) is True
+    assert _stat_changed("inf", "inf") is False and _stat_changed("inf", 5.0) is True
+    assert _stat_changed(1.0, 1.0 + 1e-12) is False and _stat_changed("n/a", 0.0) is True
+    assert _changed_stats({"A": 1, "LightRadiusMod": 1.1}, {"A": 1, "LightRadiusMod": 1.0, "B": 2}) == ["B"]
+
+
+def test_ablate_reads_a_line_dead_only_after_the_main_pass_agrees() -> None:
+    # `direct_calc` does not report flask charge generation; the main pass does.
+    def _charges(st: dict[str, Any], on: bool) -> None:
+        st["ManaFlaskChargeGen"] = 1.33 if on else 0.33
+
+    worker = _one_line_worker(
+        {"section": "explicit", "text": "Mana Flasks gain 3 Charges every 3 seconds"}, stats_fn=_charges
+    )
+    worker.caps["directCalc"] = True
+    orig_call = worker.call
+
+    def _call(method: str, params: dict[str, Any] | None = None, **kw: Any) -> dict[str, Any]:
+        if method == "direct_calc":
+            return {"stats": {k: v for k, v in worker._stats().items() if k != "ManaFlaskChargeGen"}, "warnings": []}
+        return orig_call(method, params, **kw)
+
+    worker.call = _call  # type: ignore[method-assign]
+    d = ablate_item_mods(worker, "Ring 1")["ablation_deltas"][0]  # type: ignore[arg-type]
+    assert d["isDeadMod"] is False
+    assert d["otherChangedStats"] == ["ManaFlaskChargeGen"]
+
+
+def test_ablate_new_warning_keeps_a_line_alive_and_fallback_notes_are_listed(monkeypatch: pytest.MonkeyPatch) -> None:
+    worker = _one_line_worker({"section": "explicit", "text": "Skills Cost no Mana"})
+    orig_call = worker.call
+
+    def _call(method: str, params: dict[str, Any] | None = None, **kw: Any) -> dict[str, Any]:
+        if method == "get_sidebar" and any(ml.get("disabled") for ml in worker.mod_lines):
+            return {"warnings": [{"raw": "Your Mana Reservation exceeds your Mana"}]}
+        return orig_call(method, params, **kw)
+
+    worker.call = _call  # type: ignore[method-assign]
+
+    from pob_cli.item_ablate import run as run_mod
+
+    class _NotingTransaction(run_mod.BuildTransaction):
+        def restore(self, *args: Any, **kwargs: Any) -> str | None:
+            note = super().restore(*args, **kwargs)
+            self.notes.append("CoW restore unavailable; re-imported the code")
+            return note
+
+    monkeypatch.setattr(run_mod, "BuildTransaction", _NotingTransaction)
+    res = ablate_item_mods(worker, "Ring 1")  # type: ignore[arg-type]
+    d = res["ablation_deltas"][0]
+    assert d["changedStatCount"] == 0 and d["isDeadMod"] is False and d["bricksRequirements"] is False
+    assert isinstance(res["restoreCheck"]["fallback"], list) and len(res["restoreCheck"]["fallback"]) >= 2
+
+
+@pytest.mark.parametrize(("second_set", "weapon_set", "active"), [(True, 2, True), (True, 1, False), (False, 1, True)])
+def test_ablate_slot_activity_follows_the_selected_weapon_set(second_set: bool, weapon_set: int, active: bool) -> None:
+    worker = _one_line_worker({"section": "explicit", "text": "10% increased Light Radius"}, slot_extra={"weaponSet": weapon_set})
+    orig_call = worker.call
+
+    def _call(method: str, params: dict[str, Any] | None = None, **kw: Any) -> dict[str, Any]:
+        out = orig_call(method, params, **kw)
+        if method == "list_items":
+            out["useSecondWeaponSet"] = second_set
+        return out
+
+    worker.call = _call  # type: ignore[method-assign]
+    res = ablate_item_mods(worker, "Ring 1")  # type: ignore[arg-type]
+    assert res["slotActive"] is active
+    assert res["deadModCount"] == (1 if active else 0)

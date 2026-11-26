@@ -13,11 +13,12 @@ from ..snapshot import BuildScope, BuildTransaction, capture_digest, capture_dir
 from .deltas import (
     _ANNULLABLE_CATEGORIES,
     _build_baseline_block,
+    _changed_stats,
     _eval_single_mod_delta,
     _extract_fractured_keys,
     _has_utility_guard,
     _line_switched_off,
-    _main_group_label,
+    _main_skill_moved,
     _parse_item_craftability,
     _slot_category,
     _slot_is_active,
@@ -59,7 +60,7 @@ def ablate_item_mods(worker: BridgeWorker, slot_name: str) -> dict[str, Any]:
             "stats": base_direct.get("stats") or base_digest.get("stats") or {},
             "warnings": list(base_direct.get("warnings") or base_digest.get("warnings") or []),
         }
-        base_main_group = _main_group_label(base_digest.get("buildHeader"))
+        base_header = base_digest.get("buildHeader")
         baseline = _build_baseline_block(base_digest)
 
         edit_state = worker.call("item_edit_begin", {"id": item_id})
@@ -77,16 +78,6 @@ def ablate_item_mods(worker: BridgeWorker, slot_name: str) -> dict[str, Any]:
         deltas: list[dict[str, Any]] = []
         disabled_count = 0
 
-        def _judge(ml: dict[str, Any], cand_digest: dict[str, Any], unmeasured: str | None) -> dict[str, Any]:
-            return _eval_single_mod_delta(
-                entry=ml,
-                slot_category=_slot_category(ml, fractured_keys),
-                base_digest=eval_base_digest,
-                cand_digest=cand_digest,
-                unmeasured=unmeasured,
-                cluster_jewel=cluster_jewel,
-            )
-
         for ml in mod_lines:
             if ml.get("disabled"):
                 # Already off on the item: there is nothing to switch, and the count says so.
@@ -98,6 +89,7 @@ def ablate_item_mods(worker: BridgeWorker, slot_name: str) -> dict[str, Any]:
             edit_open = False
             unmeasured: str | None = None
             cand_digest = eval_base_digest
+            main_pass_changed: list[str] = []
             try:
                 worker.call("item_edit_begin", {"id": item_id})
                 edit_open = True
@@ -110,9 +102,16 @@ def ablate_item_mods(worker: BridgeWorker, slot_name: str) -> dict[str, Any]:
                     # without re-auto-equipping the item into another slot (e.g. Ring 2 stays in Ring 2).
                     worker.call("item_edit_commit", {"equip": True})
                     edit_open = False
-                    if _main_group_label(worker.call("get_build_header", {})) != base_main_group:
+                    if _main_skill_moved(base_header, worker.call("get_build_header", {})):
                         unmeasured = "mainSkillShifted"
                     cand_digest = capture_direct_digest(worker, base_digest=base_digest)
+                    if slot_active and not _changed_stats(eval_base_digest["stats"], cand_digest.get("stats") or {}):
+                        # `direct_calc` leaves out part of what the main pass computes (flask charge
+                        # generation, flask and tincture effect): a line that looks dead is read once
+                        # more through `get_stats`, after the frame that rebuilds it.
+                        worker.call("pump", {"seconds": 0})
+                        full_stats = worker.call("get_stats", {}).get("stats") or {}
+                        main_pass_changed = _changed_stats(base_digest.get("stats") or {}, full_stats)
             finally:
                 if edit_open:
                     try:
@@ -121,7 +120,17 @@ def ablate_item_mods(worker: BridgeWorker, slot_name: str) -> dict[str, Any]:
                         pass
                 tx.restore(rebuild=False)
 
-            deltas.append(_judge(ml, cand_digest, unmeasured))
+            deltas.append(
+                _eval_single_mod_delta(
+                    entry=ml,
+                    slot_category=_slot_category(ml, fractured_keys),
+                    base_digest=eval_base_digest,
+                    cand_digest=cand_digest,
+                    unmeasured=unmeasured,
+                    cluster_jewel=cluster_jewel,
+                    main_pass_changed=main_pass_changed,
+                )
+            )
 
         restore_check = tx.rollback_verified(base_digest)
         if tx.notes:
