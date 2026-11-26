@@ -8,7 +8,7 @@ from click.testing import CliRunner
 from pob_cli.cli import main as cli
 from pob_cli.cli_common import _looks_like_equipment_slot
 from pob_cli.formatters.diagnose_md import _fmt_diagnose_baseline
-from pob_cli.formatters.primitives import fmt_delta, fmt_num
+from pob_cli.formatters.primitives import fmt_delta, fmt_num, fmt_signed_pct
 
 
 def _brief_line(output: str, name: str) -> str:
@@ -114,6 +114,13 @@ def test_fmt_num_keeps_precision_below_one() -> None:
     assert fmt_num(12.34, decimals=2) == "12.34"
     assert fmt_num(12345.6) == "12,346"
     assert fmt_delta(0.03, 0.033) == "+0.003 (+10.0%)"
+
+
+def test_fmt_num_never_prints_negative_zero_below_one() -> None:
+    # Float noise such as 0.3 - (0.1 + 0.2) must read as zero, not as a loss
+    assert fmt_num(-1e-12) == "0.0" and fmt_num(0.3 - (0.1 + 0.2), 2) == "0.00"
+    assert fmt_signed_pct(-1e-12, 0) == "0.0 (0.0%)"
+    assert fmt_num(-0.00001) == "-0.00001"
 
 
 def test_diagnose_baseline_labels_capped_resists_overcap_and_mana_unit() -> None:

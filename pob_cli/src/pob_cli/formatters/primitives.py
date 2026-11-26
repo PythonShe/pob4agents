@@ -134,8 +134,8 @@ def fmt_num(val: float | int | str | None, decimals: int = 1) -> str:
                 head, _, tail = text.partition(".")
                 tail = tail.rstrip("0").ljust(decimals, "0")
                 text = f"{head}.{tail}" if tail else head
-            return text
-        text = f"{val:,.{decimals}f}"
+        else:
+            text = f"{val:,.{decimals}f}"
         return text[1:] if text.startswith("-") and not text.strip("-0.") else text  # never "-0"
     if isinstance(val, int):
         return f"{val:,}"
